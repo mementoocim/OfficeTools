@@ -1,11 +1,10 @@
 import { useState } from 'react'
 import { X } from 'lucide-react'
-import { getSupabaseConfig, saveSupabaseConfig, getSupabaseClient } from '../lib/supabase'
 import { loginWithEmail, loginWithGoogle, registerWithEmail, sendPasswordReset } from '../lib/auth'
 import { GoogleWord } from './Common'
 import type { UserProfile } from '../types/auth'
 
-type AuthTab = 'login' | 'register' | 'forgot' | 'setup'
+type AuthTab = 'login' | 'register' | 'forgot'
 
 export function AuthModal({
   isOpen,
@@ -18,18 +17,13 @@ export function AuthModal({
   onSuccess: (profile: UserProfile) => void
   onClose: () => void
 }) {
-  const [tab, setTab] = useState<AuthTab>(initialTab)
-  const config = getSupabaseConfig()
+  const [tab, setTab] = useState<AuthTab>(initialTab || 'login')
 
   // Form Fields
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [fullName, setFullName] = useState('')
-
-  // Supabase Setup Fields
-  const [supabaseUrl, setSupabaseUrl] = useState(config.url)
-  const [supabaseAnonKey, setSupabaseAnonKey] = useState(config.anonKey)
 
   // State
   const [loading, setLoading] = useState(false)
@@ -101,7 +95,7 @@ export function AuthModal({
     }
 
     if (profile) {
-      setMessage('Account created successfully! Logging you in...')
+      setMessage('Account created successfully! Signing you in...')
       setTimeout(() => {
         onSuccess(profile)
         onClose()
@@ -125,55 +119,33 @@ export function AuthModal({
     if (err) {
       setError(err)
     } else {
-      setMessage('Password reset instructions have been sent to your email.')
-    }
-  }
-
-  const handleSaveSetup = (e: React.FormEvent) => {
-    e.preventDefault()
-    setError('')
-    setMessage('')
-    if (!supabaseUrl || !supabaseAnonKey) {
-      setError('Please enter both the Supabase URL and Anon Public Key.')
-      return
-    }
-    if (!supabaseUrl.startsWith('http')) {
-      setError('Supabase URL must start with https://')
-      return
-    }
-
-    saveSupabaseConfig(supabaseUrl, supabaseAnonKey)
-    const client = getSupabaseClient()
-    if (client) {
-      setMessage('Supabase connection saved successfully!')
-      setTimeout(() => {
-        setTab('login')
-        setMessage('')
-      }, 700)
-    } else {
-      setError('Could not initialize Supabase with the provided credentials.')
+      setMessage('Password reset instructions sent to your email.')
     }
   }
 
   return (
     <div className="modal-backdrop centered-backdrop" onMouseDown={onClose}>
-      <div className="modal auth-modal" onMouseDown={e => e.stopPropagation()}>
-        <header className="submodal-header">
-          <h2>
-            {tab === 'login' && 'Sign in to OfficeTool'}
-            {tab === 'register' && 'Create Staff Account'}
+      <div
+        className="modal auth-modal"
+        onMouseDown={e => e.stopPropagation()}
+        role="dialog"
+        aria-labelledby="auth-modal-title"
+      >
+        <header>
+          <h2 id="auth-modal-title">
+            {tab === 'login' && 'Staff Sign In'}
+            {tab === 'register' && 'Register Staff Account'}
             {tab === 'forgot' && 'Reset Password'}
-            {tab === 'setup' && 'Supabase Cloud Setup'}
           </h2>
           <button type="button" className="icon-button" onClick={onClose} title="Close">
-            <X size={16} />
+            <X size={18} />
           </button>
         </header>
 
-        <div className="submodal-body">
-          {/* Quick Tab Switcher */}
-          {tab !== 'setup' && (
-            <div className="segmented auth-tabs">
+        <div className="modal-content">
+          {/* Segmented Switcher for Login / Register */}
+          {tab !== 'forgot' && (
+            <div className="segmented auth-tabs" style={{ marginBottom: '16px' }}>
               <button
                 type="button"
                 className={tab === 'login' ? 'selected' : ''}
@@ -241,13 +213,6 @@ export function AuthModal({
                     onClick={() => { setTab('forgot'); setError(''); setMessage('') }}
                   >
                     Forgot password?
-                  </button>
-                  <button
-                    type="button"
-                    className="text-button"
-                    onClick={() => { setTab('setup'); setError(''); setMessage('') }}
-                  >
-                    Database connection
                   </button>
                 </div>
 
@@ -360,50 +325,6 @@ export function AuthModal({
                 </button>
                 <button type="submit" className="button" disabled={loading}>
                   {loading ? 'Sending...' : 'Send Reset Link'}
-                </button>
-              </div>
-            </form>
-          )}
-
-          {/* TAB 4: SUPABASE SETUP */}
-          {tab === 'setup' && (
-            <form onSubmit={handleSaveSetup} className="auth-form">
-              <p className="auth-hint">
-                Connect OfficeTool to your free Supabase project to enable cloud accounts and admin roles across devices.
-              </p>
-
-              <label className="submodal-field">
-                <span>Supabase Project URL</span>
-                <input
-                  type="url"
-                  required
-                  value={supabaseUrl}
-                  onChange={e => setSupabaseUrl(e.target.value)}
-                  placeholder="https://xyzcompany.supabase.co"
-                />
-              </label>
-
-              <label className="submodal-field">
-                <span>Supabase Anon Public Key</span>
-                <textarea
-                  rows={3}
-                  required
-                  value={supabaseAnonKey}
-                  onChange={e => setSupabaseAnonKey(e.target.value)}
-                  placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                />
-              </label>
-
-              <div className="submodal-actions auth-actions">
-                <button
-                  type="button"
-                  className="button secondary"
-                  onClick={() => { setTab('login'); setError(''); setMessage('') }}
-                >
-                  Cancel
-                </button>
-                <button type="submit" className="button">
-                  Save Connection
                 </button>
               </div>
             </form>

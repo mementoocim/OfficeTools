@@ -1,10 +1,9 @@
 import { useState } from 'react'
-import { getSupabaseConfig, saveSupabaseConfig, getSupabaseClient } from '../lib/supabase'
 import { loginWithEmail, loginWithGoogle, registerWithEmail, sendPasswordReset } from '../lib/auth'
 import { GoogleWord } from './Common'
 import type { UserProfile } from '../types/auth'
 
-type AuthTab = 'login' | 'register' | 'forgot' | 'setup'
+type AuthTab = 'login' | 'register' | 'forgot'
 
 export function AuthScreen({
   onSuccess
@@ -12,17 +11,12 @@ export function AuthScreen({
   onSuccess: (profile: UserProfile) => void
 }) {
   const [tab, setTab] = useState<AuthTab>('login')
-  const config = getSupabaseConfig()
 
   // Form Fields
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [fullName, setFullName] = useState('')
-
-  // Supabase Setup Fields
-  const [supabaseUrl, setSupabaseUrl] = useState(config.url)
-  const [supabaseAnonKey, setSupabaseAnonKey] = useState(config.anonKey)
 
   // State
   const [loading, setLoading] = useState(false)
@@ -118,35 +112,10 @@ export function AuthScreen({
     }
   }
 
-  const handleSaveSetup = (e: React.FormEvent) => {
-    e.preventDefault()
-    setError('')
-    setMessage('')
-    if (!supabaseUrl || !supabaseAnonKey) {
-      setError('Please enter both Supabase URL and Anon Key.')
-      return
-    }
-    if (!supabaseUrl.startsWith('http')) {
-      setError('Supabase URL must start with https://')
-      return
-    }
-
-    saveSupabaseConfig(supabaseUrl, supabaseAnonKey)
-    const client = getSupabaseClient()
-    if (client) {
-      setMessage('Database configuration saved successfully!')
-      setTimeout(() => {
-        setTab('login')
-        setMessage('')
-      }, 600)
-    } else {
-      setError('Could not connect to Supabase with provided credentials.')
-    }
-  }
-
   return (
     <div className="auth-screen-layout">
       <div className="auth-screen-card">
+        {/* Brand Header */}
         <div className="auth-brand-header">
           <span className="auth-brand-badge">Office Toolkit</span>
           <h1>Staff Access & Authentication</h1>
@@ -154,7 +123,7 @@ export function AuthScreen({
         </div>
 
         {/* Tab Switcher */}
-        {tab !== 'setup' && (
+        {tab !== 'forgot' && (
           <div className="segmented auth-tabs" style={{ marginBottom: '16px' }}>
             <button
               type="button"
@@ -224,13 +193,6 @@ export function AuthScreen({
                 >
                   Forgot password?
                 </button>
-                <button
-                  type="button"
-                  className="text-button"
-                  onClick={() => { setTab('setup'); setError(''); setMessage('') }}
-                >
-                  Database connection
-                </button>
               </div>
 
               <button
@@ -292,7 +254,7 @@ export function AuthScreen({
                   required
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  placeholder="Create password"
+                  placeholder="Create a strong password"
                 />
               </label>
 
@@ -303,7 +265,7 @@ export function AuthScreen({
                   required
                   value={confirmPassword}
                   onChange={e => setConfirmPassword(e.target.value)}
-                  placeholder="Repeat password"
+                  placeholder="Re-type password"
                 />
               </label>
 
@@ -348,50 +310,6 @@ export function AuthScreen({
               </button>
               <button type="submit" className="button" disabled={loading}>
                 {loading ? 'Sending...' : 'Send Reset Link'}
-              </button>
-            </div>
-          </form>
-        )}
-
-        {/* 4. DATABASE SETUP */}
-        {tab === 'setup' && (
-          <form onSubmit={handleSaveSetup} className="auth-form">
-            <p className="auth-hint">
-              Connect your Supabase project credentials to enable cloud accounts across team devices.
-            </p>
-
-            <label className="submodal-field">
-              <span>Supabase Project URL</span>
-              <input
-                type="url"
-                required
-                value={supabaseUrl}
-                onChange={e => setSupabaseUrl(e.target.value)}
-                placeholder="https://xyzcompany.supabase.co"
-              />
-            </label>
-
-            <label className="submodal-field">
-              <span>Supabase Anon Public Key</span>
-              <textarea
-                rows={3}
-                required
-                value={supabaseAnonKey}
-                onChange={e => setSupabaseAnonKey(e.target.value)}
-                placeholder="sb_publishable_... or eyJhbGciOi..."
-              />
-            </label>
-
-            <div className="submodal-actions auth-actions">
-              <button
-                type="button"
-                className="button secondary"
-                onClick={() => { setTab('login'); setError(''); setMessage('') }}
-              >
-                Cancel
-              </button>
-              <button type="submit" className="button">
-                Save Connection
               </button>
             </div>
           </form>

@@ -74,7 +74,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true)
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null)
   const [authModalOpen, setAuthModalOpen] = useState(false)
-  const [authModalTab, setAuthModalTab] = useState<'login' | 'register' | 'forgot' | 'setup'>('login')
+  const [authModalTab, setAuthModalTab] = useState<'login' | 'register' | 'forgot'>('login')
   const [onboardingOpen, setOnboardingOpen] = useState(false)
 
   useEffect(() => {
@@ -2462,7 +2462,7 @@ function Settings({
   archives: ArchivedItem[]
   clearArchives: () => void
   currentUser: UserProfile | null
-  onOpenAuth: (tab?: 'login' | 'register' | 'forgot' | 'setup') => void
+  onOpenAuth: (tab?: 'login' | 'register' | 'forgot') => void
   onSignOut: () => void
   onOpenOnboarding?: () => void
   onResetAllData: () => void
@@ -2501,13 +2501,6 @@ function Settings({
                 Sign In / Register
               </button>
             )}
-            <button
-              type="button"
-              className="button secondary"
-              onClick={() => onOpenAuth('setup')}
-            >
-              Configure Supabase Connection
-            </button>
             {onOpenOnboarding && (
               <button
                 type="button"
