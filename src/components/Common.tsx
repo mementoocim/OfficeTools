@@ -19,3 +19,48 @@ export function GoogleWord() {
     </span>
   )
 }
+
+export function CrashRecoveryBanner({
+  savedAt,
+  title,
+  onRestore,
+  onDiscard
+}: {
+  savedAt: string
+  title?: string
+  onRestore: () => void
+  onDiscard: () => void
+}) {
+  return (
+    <div className="crash-recovery-banner" role="alert">
+      <div className="crash-recovery-info">
+        <strong>Unsaved work recovered from previous session</strong>
+        <p>Auto-saved locally at {savedAt}{title ? ` • ${title}` : ''}. Would you like to restore your progress?</p>
+      </div>
+      <div className="crash-recovery-actions">
+        <button type="button" className="button sm" onClick={onRestore}>
+          Restore Draft
+        </button>
+        <button type="button" className="button secondary sm" onClick={onDiscard}>
+          Discard & Start Blank
+        </button>
+      </div>
+    </div>
+  )
+}
+
+export function AutoSaveStatus({
+  lastSaved,
+  isDirty
+}: {
+  lastSaved: string | null
+  isDirty: boolean
+}) {
+  if (!isDirty && !lastSaved) return null
+  return (
+    <span className="autosave-status-badge" title="Changes are automatically saved to your local browser storage">
+      <span className="autosave-dot" />
+      {lastSaved ? `Auto-saved locally (${lastSaved})` : 'Saving changes...'}
+    </span>
+  )
+}

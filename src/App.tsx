@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, AlertTriangle, Archive, ArrowDown, ArrowUp, ArrowUpDown, BookOpenText, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, FileDown, FileSpreadsheet, FileText, Keyboard, LayoutTemplate, Loader2, Medal, MoreHorizontal, Plus, Printer, RotateCcw, Save, ShieldCheck, Sparkles, Trash2, Upload, WandSparkles, X } from 'lucide-react'
 import { AppSidebar } from './components/AppSidebar'
 import { Certificates } from './components/Certificates'
-import { EmptyState, LocalBadge, Modal, PageTitle, SearchField, ToolCard } from './components/Common'
+import { AutoSaveStatus, CrashRecoveryBanner, EmptyState, LocalBadge, Modal, PageTitle, SearchField, ToolCard } from './components/Common'
 import type { ArchivedItem, CertificateData, DocumentData, ImportStatus, Page, RecentFile, ReportSection, SavedTemplate, SpreadsheetData } from './types'
-import { storage } from './lib/storage'
+import { storage, type StoredDraft } from './lib/storage'
 import {
   cleanRows,
   exportSpreadsheet,
@@ -480,14 +480,70 @@ function Documents({ templates, saveTemplate, addRecent, notify, onDirtyChange, 
   onDirtyChange?: (dirty: boolean) => void
   onSnapshotChange?: (snapshot: { label: string; summary: string; tool: 'documents'; payload: unknown } | null) => void
 }) {
-  const [doc, setDoc] = useState<DocumentData>(() => storage.getDraft<DocumentData>('documents', initialDocument))
+  const initialSnapshot = useRef<StoredDraft<DocumentData> | null>(storage.getDraftSnapshot<DocumentData>('documents')).current
+  const hasUnsavedWork = Boolean(
+    initialSnapshot &&
+    initialSnapshot.data &&
+    (
+      initialSnapshot.data.recipientName?.trim() ||
+      initialSnapshot.data.recipientPosition?.trim() ||
+      initialSnapshot.data.organization?.trim() ||
+      initialSnapshot.data.address?.trim() ||
+      initialSnapshot.data.subject?.trim() ||
+      initialSnapshot.data.senderPosition?.trim() ||
+      (initialSnapshot.data.body && initialSnapshot.data.body.trim() !== initialDocument.body.trim())
+    )
+  )
+
+  const [recoveredDraft, setRecoveredDraft] = useState<StoredDraft<DocumentData> | null>(hasUnsavedWork ? initialSnapshot : null)
+  const [doc, setDoc] = useState<DocumentData>(initialDocument)
+  const [lastSaved, setLastSaved] = useState<string | null>(null)
   const [zoom, setZoom] = useState(0.75)
   const [templateOpen, setTemplateOpen] = useState(false)
   const update = (field: keyof DocumentData, value: string) => setDoc({ ...doc, [field]: value })
   const title = doc.subject || `${doc.type} document`
   const lines = documentLines(doc)
 
+  const handleRestore = () => {
+    if (recoveredDraft?.data) {
+      setDoc(recoveredDraft.data)
+      setLastSaved(recoveredDraft.savedAt)
+      setRecoveredDraft(null)
+      notify('Draft restored from previous session')
+    }
+  }
+
+  const handleDiscard = () => {
+    storage.clearDraft('documents')
+    setRecoveredDraft(null)
+    setDoc(initialDocument)
+    setLastSaved(null)
+    notify('Draft discarded. Started blank document.')
+  }
+
+  const handleNewDocument = () => {
+    const isModified = Boolean(
+      doc.recipientName.trim() ||
+      doc.recipientPosition.trim() ||
+      doc.organization.trim() ||
+      doc.address.trim() ||
+      doc.subject.trim() ||
+      doc.senderPosition.trim() ||
+      doc.body.trim() !== initialDocument.body.trim()
+    )
+    if (isModified && !confirm('Start a new document? Any unsaved changes in the current draft will be reset.')) {
+      return
+    }
+    storage.clearDraft('documents')
+    setDoc(initialDocument)
+    setLastSaved(null)
+    setRecoveredDraft(null)
+    notify('Created new blank document')
+  }
+
   useEffect(() => {
+    if (recoveredDraft) return
+
     const isModified = Boolean(
       doc.recipientName.trim() ||
       doc.recipientPosition.trim() ||
@@ -499,7 +555,8 @@ function Documents({ templates, saveTemplate, addRecent, notify, onDirtyChange, 
     )
     onDirtyChange?.(isModified)
     if (isModified) {
-      storage.saveDraft('documents', doc)
+      const savedTime = storage.saveDraft('documents', doc, doc.subject || `${doc.type} document`)
+      setLastSaved(savedTime)
       onSnapshotChange?.({
         label: doc.subject.trim() || `${doc.type} (${doc.recipientName || 'Untitled'})`,
         summary: `${doc.type} • ${doc.recipientName ? `To: ${doc.recipientName}` : 'In progress'}`,
@@ -508,14 +565,70 @@ function Documents({ templates, saveTemplate, addRecent, notify, onDirtyChange, 
       })
     } else {
       storage.clearDraft('documents')
+      setLastSaved(null)
       onSnapshotChange?.(null)
     }
-  }, [doc, onDirtyChange, onSnapshotChange])
+  }, [doc, recoveredDraft, onDirtyChange, onSnapshotChange])
 
-  const loadTemplate = (template: SavedTemplate) => { setDoc(template.payload as DocumentData); setTemplateOpen(false); notify('Template loaded') }
+  const loadTemplate = (template: SavedTemplate) => {
+    setDoc(template.payload as DocumentData)
+    setTemplateOpen(false)
+    setRecoveredDraft(null)
+    notify('Template loaded')
+  }
   const save = () => { const name = prompt('Template name', doc.subject || 'Untitled Letter'); if (name) saveTemplate({ id: id(), name, category: 'Document', updatedAt: new Date().toLocaleString(), payload: doc }) }
   const record = () => addRecent({ id: id(), name: title, type: 'Document', modified: 'Just now' })
-  return <div className="page workspace"><PageTitle title="Document Generator" subtitle="Create polished office documents in a few focused steps"><div className="header-actions"><LocalBadge/><button className="button secondary" onClick={() => setTemplateOpen(true)}><LayoutTemplate size={16}/> Templates</button><button className="button" onClick={save}><Save size={16}/> Save template</button></div></PageTitle><div className="editor-layout"><section className="field-panel"><label>Document type<select value={doc.type} onChange={e => update('type', e.target.value)}><option>Letter</option><option>Memo</option><option>Simple Report</option><option>Certificate</option></select></label>{([['date','Date'],['recipientName','Recipient name'],['recipientPosition','Recipient position'],['organization','Office / Organization'],['address','Address'],['subject','Subject'],['greeting','Greeting']] as [keyof DocumentData, string][]).map(([key, label]) => <label key={key}>{label}<input value={doc[key]} onChange={e => update(key, e.target.value)}/></label>)}<label>Body<textarea rows={7} value={doc.body} onChange={e => update('body', e.target.value)} /></label>{([['closing','Closing'],['senderName','Sender name'],['senderPosition','Sender position']] as [keyof DocumentData, string][]).map(([key, label]) => <label key={key}>{label}<input value={doc[key]} onChange={e => update(key, e.target.value)}/></label>)}</section><section className="preview-area"><div className="preview-toolbar"><button className="icon-button" onClick={() => setZoom(Math.max(.5, zoom - .1))}>−</button><span>{Math.round(zoom * 100)}%</span><button className="icon-button" onClick={() => setZoom(Math.min(1, zoom + .1))}>+</button><button className="text-button" onClick={() => setZoom(.75)}>Fit page</button><span className="toolbar-spacer"/><button className="icon-button" title="Print" onClick={() => print()}><Printer size={17}/></button><button className="button secondary" onClick={() => { exportDocx(title, lines); record() }}><Download size={16}/> DOCX</button><button className="button" onClick={() => { exportPdf(title, lines); record() }}><FileDown size={16}/> PDF</button></div><Paper zoom={zoom} lines={lines}/></section></div>{templateOpen && <TemplateModal templates={templates.filter(t => t.category === 'Document')} load={loadTemplate} close={() => setTemplateOpen(false)} />}</div>
+  return (
+    <div className="page workspace">
+      <PageTitle title="Document Generator" subtitle="Create polished office documents in a few focused steps">
+        <div className="header-actions">
+          <LocalBadge />
+          <button type="button" className="button secondary" onClick={handleNewDocument}>
+            New Document
+          </button>
+          <button className="button secondary" onClick={() => setTemplateOpen(true)}>
+            <LayoutTemplate size={16} /> Templates
+          </button>
+          <button className="button" onClick={save}>
+            <Save size={16} /> Save template
+          </button>
+        </div>
+      </PageTitle>
+
+      {recoveredDraft && (
+        <CrashRecoveryBanner
+          savedAt={recoveredDraft.savedAt}
+          title={recoveredDraft.title || (recoveredDraft.data?.subject ? recoveredDraft.data.subject : undefined)}
+          onRestore={handleRestore}
+          onDiscard={handleDiscard}
+        />
+      )}
+
+      <div className="editor-layout">
+        <section className="field-panel">
+          <label>Document type<select value={doc.type} onChange={e => update('type', e.target.value)}><option>Letter</option><option>Memo</option><option>Simple Report</option><option>Certificate</option></select></label>
+          {([['date','Date'],['recipientName','Recipient name'],['recipientPosition','Recipient position'],['organization','Office / Organization'],['address','Address'],['subject','Subject'],['greeting','Greeting']] as [keyof DocumentData, string][]).map(([key, label]) => <label key={key}>{label}<input value={doc[key]} onChange={e => update(key, e.target.value)}/></label>)}
+          <label>Body<textarea rows={7} value={doc.body} onChange={e => update('body', e.target.value)} /></label>
+          {([['closing','Closing'],['senderName','Sender name'],['senderPosition','Sender position']] as [keyof DocumentData, string][]).map(([key, label]) => <label key={key}>{label}<input value={doc[key]} onChange={e => update(key, e.target.value)}/></label>)}
+        </section>
+        <section className="preview-area">
+          <div className="preview-toolbar">
+            <button className="icon-button" onClick={() => setZoom(Math.max(.5, zoom - .1))}>−</button>
+            <span>{Math.round(zoom * 100)}%</span>
+            <button className="icon-button" onClick={() => setZoom(Math.min(1, zoom + .1))}>+</button>
+            <button className="text-button" onClick={() => setZoom(.75)}>Fit page</button>
+            <span className="toolbar-spacer"/>
+            <AutoSaveStatus lastSaved={lastSaved} isDirty={Boolean(lastSaved)} />
+            <button className="icon-button" title="Print" onClick={() => print()}><Printer size={17}/></button>
+            <button className="button secondary" onClick={() => { exportDocx(title, lines); record() }}><Download size={16}/> DOCX</button>
+            <button className="button" onClick={() => { exportPdf(title, lines); record() }}><FileDown size={16}/> PDF</button>
+          </div>
+          <Paper zoom={zoom} lines={lines}/>
+        </section>
+      </div>
+      {templateOpen && <TemplateModal templates={templates.filter(t => t.category === 'Document')} load={loadTemplate} close={() => setTemplateOpen(false)} />}
+    </div>
+  )
 }
 
 function documentLines(doc: DocumentData) { return [doc.date, '', doc.recipientName, doc.recipientPosition, doc.organization, doc.address, '', doc.subject ? `Subject: ${doc.subject}` : '', '', doc.greeting, '', ...doc.body.split('\n'), '', doc.closing, '', doc.senderName, doc.senderPosition].filter((x, i, arr) => x || (i > 0 && arr[i - 1] !== '')) }
@@ -528,7 +641,12 @@ function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange, onSnap
   onDirtyChange?: (dirty: boolean) => void
   onSnapshotChange?: (snapshot: { label: string; summary: string; tool: 'spreadsheets'; payload: unknown } | null) => void
 }) {
-  const [data, setData] = useState<SpreadsheetData | null>(() => storage.getDraft<SpreadsheetData | null>('spreadsheets', null))
+  const initialSnapshot = useRef<StoredDraft<SpreadsheetData> | null>(storage.getDraftSnapshot<SpreadsheetData>('spreadsheets')).current
+  const hasUnsavedWork = Boolean(initialSnapshot && initialSnapshot.data && initialSnapshot.data.rows && initialSnapshot.data.rows.length > 0)
+
+  const [recoveredDraft, setRecoveredDraft] = useState<StoredDraft<SpreadsheetData> | null>(hasUnsavedWork ? initialSnapshot : null)
+  const [data, setData] = useState<SpreadsheetData | null>(null)
+  const [lastSaved, setLastSaved] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
   const [history, setHistory] = useState<SpreadsheetData[]>([])
@@ -542,11 +660,43 @@ function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange, onSnap
   const [showSummary, setShowSummary] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
+  const handleRestore = () => {
+    if (recoveredDraft?.data) {
+      setData(recoveredDraft.data)
+      setLastSaved(recoveredDraft.savedAt)
+      setRecoveredDraft(null)
+      notify('Spreadsheet restored from previous session')
+    }
+  }
+
+  const handleDiscard = () => {
+    storage.clearDraft('spreadsheets')
+    setRecoveredDraft(null)
+    setData(null)
+    setLastSaved(null)
+    notify('Draft discarded. Ready for new spreadsheet.')
+  }
+
+  const handleCloseSheet = () => {
+    if (data && !confirm('Close active spreadsheet? Any unsaved changes will be cleared.')) {
+      return
+    }
+    storage.clearDraft('spreadsheets')
+    setData(null)
+    setLastSaved(null)
+    setRecoveredDraft(null)
+    setSearch('')
+    setSortCol(null)
+    notify('Spreadsheet closed')
+  }
+
   useEffect(() => {
+    if (recoveredDraft) return
     const hasData = Boolean(data && data.rows.length > 0)
     onDirtyChange?.(hasData)
     if (hasData && data) {
-      storage.saveDraft('spreadsheets', data)
+      const savedTime = storage.saveDraft('spreadsheets', data, data.name || 'Spreadsheet Dataset')
+      setLastSaved(savedTime)
       onSnapshotChange?.({
         label: data.name || 'Spreadsheet Dataset',
         summary: `${data.rows.length.toLocaleString()} rows • ${data.headers.length} cols`,
@@ -555,9 +705,10 @@ function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange, onSnap
       })
     } else {
       storage.clearDraft('spreadsheets')
+      setLastSaved(null)
       onSnapshotChange?.(null)
     }
-  }, [data, onDirtyChange, onSnapshotChange])
+  }, [data, recoveredDraft, onDirtyChange, onSnapshotChange])
 
   const importFile = async (file?: File) => {
     if (!file) return
@@ -689,6 +840,15 @@ function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange, onSnap
         <LocalBadge />
       </PageTitle>
 
+      {recoveredDraft && (
+        <CrashRecoveryBanner
+          savedAt={recoveredDraft.savedAt}
+          title={recoveredDraft.title || (recoveredDraft.data?.name ? `${recoveredDraft.data.name} (${recoveredDraft.data.rows?.length.toLocaleString() || 0} rows)` : undefined)}
+          onRestore={handleRestore}
+          onDiscard={handleDiscard}
+        />
+      )}
+
       {!data ? (
         <section
           className="dropzone"
@@ -728,12 +888,18 @@ function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange, onSnap
               </p>
             </div>
             <div className="header-actions">
+              <AutoSaveStatus lastSaved={lastSaved} isDirty={Boolean(data)} />
+              <button
+                type="button"
+                className="button secondary"
+                onClick={handleCloseSheet}
+              >
+                Close Sheet
+              </button>
               <button
                 className="button secondary"
                 onClick={() => {
-                  setData(null)
-                  setSearch('')
-                  setSortCol(null)
+                  fileRef.current?.click()
                 }}
               >
                 <Upload size={16} /> Import another
@@ -2309,17 +2475,79 @@ function Reports({ templates, saveTemplate, addRecent, notify, onDirtyChange, on
   onDirtyChange?: (dirty: boolean) => void
   onSnapshotChange?: (snapshot: { label: string; summary: string; tool: 'reports'; payload: unknown } | null) => void
 }) {
-  const [draft] = useState<{ title?: string; period?: string; prepared?: string; office?: string; sections?: ReportSection[] }>(() => storage.getDraft('reports', {}))
-  const [title, setTitle] = useState(draft.title || 'Monthly Activity Report')
-  const [period, setPeriod] = useState(draft.period || '')
-  const [prepared, setPrepared] = useState(draft.prepared || 'Mico')
-  const [office, setOffice] = useState(draft.office || '')
-  const [sections, setSections] = useState(draft.sections || defaultSections)
+  const initialSnapshot = useRef<StoredDraft<{ title?: string; period?: string; prepared?: string; office?: string; sections?: ReportSection[] }> | null>(storage.getDraftSnapshot('reports')).current
+  const hasUnsavedWork = Boolean(
+    initialSnapshot &&
+    initialSnapshot.data &&
+    (
+      initialSnapshot.data.period?.trim() ||
+      initialSnapshot.data.office?.trim() ||
+      (initialSnapshot.data.title && initialSnapshot.data.title !== 'Monthly Activity Report') ||
+      (initialSnapshot.data.sections && initialSnapshot.data.sections.some(s => s.content.trim() !== ''))
+    )
+  )
+
+  const [recoveredDraft, setRecoveredDraft] = useState(hasUnsavedWork ? initialSnapshot : null)
+  const [title, setTitle] = useState('Monthly Activity Report')
+  const [period, setPeriod] = useState('')
+  const [prepared, setPrepared] = useState('Mico')
+  const [office, setOffice] = useState('')
+  const [sections, setSections] = useState(defaultSections())
+  const [lastSaved, setLastSaved] = useState<string | null>(null)
   const [templatesOpen, setTemplatesOpen] = useState(false)
+
+  const handleRestore = () => {
+    if (recoveredDraft?.data) {
+      const d = recoveredDraft.data
+      if (d.title) setTitle(d.title)
+      if (d.period) setPeriod(d.period)
+      if (d.prepared) setPrepared(d.prepared)
+      if (d.office) setOffice(d.office)
+      if (d.sections) setSections(d.sections)
+      setLastSaved(recoveredDraft.savedAt)
+      setRecoveredDraft(null)
+      notify('Report draft restored from previous session')
+    }
+  }
+
+  const handleDiscard = () => {
+    storage.clearDraft('reports')
+    setRecoveredDraft(null)
+    setTitle('Monthly Activity Report')
+    setPeriod('')
+    setPrepared('Mico')
+    setOffice('')
+    setSections(defaultSections())
+    setLastSaved(null)
+    notify('Draft discarded. Started blank report.')
+  }
+
+  const handleNewReport = () => {
+    const isModified = Boolean(
+      period.trim() ||
+      office.trim() ||
+      title !== 'Monthly Activity Report' ||
+      sections.some(s => s.content.trim() !== '')
+    )
+    if (isModified && !confirm('Start a new report? Any unsaved changes in current draft will be reset.')) {
+      return
+    }
+    storage.clearDraft('reports')
+    setTitle('Monthly Activity Report')
+    setPeriod('')
+    setPrepared('Mico')
+    setOffice('')
+    setSections(defaultSections())
+    setLastSaved(null)
+    setRecoveredDraft(null)
+    notify('Created new blank report')
+  }
 
   const lines = [period && `Reporting period: ${period}`, prepared && `Prepared by: ${prepared}`, office && `Office / Unit: ${office}`, '', ...sections.flatMap(s => [s.title, ...s.content.split('\n'), ''])].filter(Boolean) as string[]
 
   useEffect(() => {
+    if (recoveredDraft) return
+
     const isModified = Boolean(
       period.trim() ||
       office.trim() ||
@@ -2329,7 +2557,8 @@ function Reports({ templates, saveTemplate, addRecent, notify, onDirtyChange, on
     onDirtyChange?.(isModified)
     if (isModified) {
       const payload = { title, period, prepared, office, sections }
-      storage.saveDraft('reports', payload)
+      const savedTime = storage.saveDraft('reports', payload, title)
+      setLastSaved(savedTime)
       onSnapshotChange?.({
         label: title || 'Activity Report',
         summary: `${period ? `Period: ${period} • ` : ''}${sections.length} sections`,
@@ -2338,14 +2567,73 @@ function Reports({ templates, saveTemplate, addRecent, notify, onDirtyChange, on
       })
     } else {
       storage.clearDraft('reports')
+      setLastSaved(null)
       onSnapshotChange?.(null)
     }
-  }, [title, period, office, sections, onDirtyChange, onSnapshotChange])
+  }, [title, period, prepared, office, sections, recoveredDraft, onDirtyChange, onSnapshotChange])
 
   const changeSection = (index: number, patch: Partial<ReportSection>) => setSections(sections.map((s, i) => i === index ? { ...s, ...patch } : s))
-  const use = (template: SavedTemplate) => { const p = template.payload as { title: string; period: string; prepared: string; office: string; sections: ReportSection[] }; setTitle(p.title); setPeriod(p.period); setPrepared(p.prepared); setOffice(p.office); setSections(p.sections); setTemplatesOpen(false); notify('Report template loaded') }
+  const use = (template: SavedTemplate) => {
+    const p = template.payload as { title: string; period: string; prepared: string; office: string; sections: ReportSection[] }
+    setTitle(p.title)
+    setPeriod(p.period)
+    setPrepared(p.prepared)
+    setOffice(p.office)
+    setSections(p.sections)
+    setTemplatesOpen(false)
+    setRecoveredDraft(null)
+    notify('Report template loaded')
+  }
   const save = () => { const name = prompt('Template name', title); if (name) saveTemplate({ id: id(), name, category: 'Report', updatedAt: new Date().toLocaleString(), payload: { title, period, prepared, office, sections } }) }
-  return <div className="page workspace"><PageTitle title="Report Builder" subtitle="Build recurring reports with reusable sections."><div className="header-actions"><button className="button secondary" onClick={() => setTemplatesOpen(true)}><Copy size={16}/> Use previous</button><button className="button" onClick={save}><Save size={16}/> Save template</button></div></PageTitle><div className="editor-layout"><section className="field-panel report-fields"><label>Report title<input value={title} onChange={e => setTitle(e.target.value)}/></label><label>Reporting period<input value={period} onChange={e => setPeriod(e.target.value)} placeholder="August 2026"/></label><label>Prepared by<input value={prepared} onChange={e => setPrepared(e.target.value)}/></label><label>Office / Unit<input value={office} onChange={e => setOffice(e.target.value)}/></label><div className="section-editor-head"><b>Sections</b><button className="icon-button" title="Add section" onClick={() => setSections([...sections, { id: id(), title: 'New Section', content: '', type: 'Text' }])}><Plus size={17}/></button></div>{sections.map((s, i) => <div className="section-form" key={s.id}><div><input value={s.title} onChange={e => changeSection(i, { title: e.target.value })}/><button title="Delete section" onClick={() => setSections(sections.filter(x => x.id !== s.id))}><Trash2 size={14}/></button></div><textarea rows={4} value={s.content} onChange={e => changeSection(i, { content: e.target.value })} placeholder={`Write ${s.title.toLowerCase()}...`}/></div>)}</section><section className="preview-area"><div className="preview-toolbar"><span>Live A4 preview</span><span className="toolbar-spacer"/><button className="icon-button" title="Print" onClick={() => print()}><Printer size={17}/></button><button className="button secondary" onClick={() => { exportDocx(title, lines); addRecent({ id: id(), name: title, type: 'Report', modified: 'Just now' }) }}>DOCX</button><button className="button" onClick={() => { exportPdf(title, lines); addRecent({ id: id(), name: title, type: 'Report', modified: 'Just now' }) }}>PDF</button></div><Paper zoom={.75} lines={[title, '', ...lines]}/></section></div>{templatesOpen && <TemplateModal templates={templates.filter(t => t.category === 'Report')} load={use} close={() => setTemplatesOpen(false)} />}</div>
+  return (
+    <div className="page workspace">
+      <PageTitle title="Report Builder" subtitle="Build recurring reports with reusable sections.">
+        <div className="header-actions">
+          <button type="button" className="button secondary" onClick={handleNewReport}>
+            New Report
+          </button>
+          <button className="button secondary" onClick={() => setTemplatesOpen(true)}>
+            <Copy size={16}/> Use previous
+          </button>
+          <button className="button" onClick={save}>
+            <Save size={16}/> Save template
+          </button>
+        </div>
+      </PageTitle>
+
+      {recoveredDraft && (
+        <CrashRecoveryBanner
+          savedAt={recoveredDraft.savedAt}
+          title={recoveredDraft.title || recoveredDraft.data.title}
+          onRestore={handleRestore}
+          onDiscard={handleDiscard}
+        />
+      )}
+
+      <div className="editor-layout">
+        <section className="field-panel report-fields">
+          <label>Report title<input value={title} onChange={e => setTitle(e.target.value)}/></label>
+          <label>Reporting period<input value={period} onChange={e => setPeriod(e.target.value)} placeholder="August 2026"/></label>
+          <label>Prepared by<input value={prepared} onChange={e => setPrepared(e.target.value)}/></label>
+          <label>Office / Unit<input value={office} onChange={e => setOffice(e.target.value)}/></label>
+          <div className="section-editor-head"><b>Sections</b><button className="icon-button" title="Add section" onClick={() => setSections([...sections, { id: id(), title: 'New Section', content: '', type: 'Text' }])}><Plus size={17}/></button></div>
+          {sections.map((s, i) => <div className="section-form" key={s.id}><div><input value={s.title} onChange={e => changeSection(i, { title: e.target.value })}/><button title="Delete section" onClick={() => setSections(sections.filter(x => x.id !== s.id))}><Trash2 size={14}/></button></div><textarea rows={4} value={s.content} onChange={e => changeSection(i, { content: e.target.value })} placeholder={`Write ${s.title.toLowerCase()}...`}/></div>)}
+        </section>
+        <section className="preview-area">
+          <div className="preview-toolbar">
+            <span>Live A4 preview</span>
+            <span className="toolbar-spacer"/>
+            <AutoSaveStatus lastSaved={lastSaved} isDirty={Boolean(lastSaved)} />
+            <button className="icon-button" title="Print" onClick={() => print()}><Printer size={17}/></button>
+            <button className="button secondary" onClick={() => { exportDocx(title, lines); addRecent({ id: id(), name: title, type: 'Report', modified: 'Just now' }) }}>DOCX</button>
+            <button className="button" onClick={() => { exportPdf(title, lines); addRecent({ id: id(), name: title, type: 'Report', modified: 'Just now' }) }}>PDF</button>
+          </div>
+          <Paper zoom={.75} lines={[title, '', ...lines]}/>
+        </section>
+      </div>
+      {templatesOpen && <TemplateModal templates={templates.filter(t => t.category === 'Report')} load={use} close={() => setTemplatesOpen(false)} />}
+    </div>
+  )
 }
 
 function Templates({ templates, useTemplate, remove }: { templates: SavedTemplate[]; useTemplate: (t: SavedTemplate) => void; remove: (id: string) => void }) { const [search, setSearch] = useState(''); const results = templates.filter(t => t.name.toLowerCase().includes(search.toLowerCase())); return <div className="page"><PageTitle title="Templates" subtitle="Your reusable documents, reports and certificates."/><SearchField value={search} onChange={setSearch} placeholder="Search templates"/>{results.length ? <div className="template-list">{results.map(t => <article key={t.id}><span className="template-icon">{t.category === 'Document' ? <FileText/> : t.category === 'Report' ? <BookOpenText/> : <Medal/>}</span><div><h3>{t.name}</h3><p>{t.category} · Updated {t.updatedAt}</p></div><button className="button secondary" onClick={() => useTemplate(t)}>Use</button><button className="icon-button" title="Duplicate" onClick={() => { storage.saveTemplate({ ...t, id: id(), name: `${t.name} copy`, updatedAt: new Date().toLocaleString() }); location.reload() }}><Copy size={16}/></button><button className="icon-button danger" title="Delete" onClick={() => remove(t.id)}><Trash2 size={16}/></button></article>)}</div> : <EmptyState title="No templates yet" text="Save a document, report, or certificate as a reusable template."/>}</div> }

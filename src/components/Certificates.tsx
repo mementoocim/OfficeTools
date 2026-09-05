@@ -20,7 +20,7 @@ import {
   Wand2
 } from 'lucide-react'
 import type { CertificateBorderStyle, CertificateData, ImportStatus, RecentFile, SavedTemplate } from '../types'
-import { storage } from '../lib/storage'
+import { storage, type StoredDraft } from '../lib/storage'
 import { readSpreadsheet, toTitleCase, toFirstLetterCase } from '../lib/spreadsheet'
 import {
   exportCombinedCertificatesPdf,
@@ -29,7 +29,7 @@ import {
   resolveDescription,
   resolveParticipant
 } from '../lib/certificateExport'
-import { LocalBadge, PageTitle } from './Common'
+import { AutoSaveStatus, CrashRecoveryBanner, LocalBadge, PageTitle } from './Common'
 
 interface CertificatesProps {
   templates: SavedTemplate[]
@@ -74,13 +74,32 @@ interface CertDraft {
 }
 
 export function Certificates({ templates, saveTemplate, addRecent, notify, onImportStatus, onDirtyChange, onSnapshotChange }: CertificatesProps) {
-  const [draft] = useState<CertDraft>(() => storage.getDraft<CertDraft>('certificates', {}))
-  const [participants, setParticipants] = useState<string[][]>(draft.participants || [])
-  const [headers, setHeaders] = useState<string[]>(draft.headers || [])
-  const [fileName, setFileName] = useState(draft.fileName || '')
-  const [cert, setCert] = useState<CertificateData>(draft.cert || initialCertificate)
-  const [index, setIndex] = useState(draft.index || 0)
-  const [step, setStep] = useState(draft.step || (draft.participants?.length ? 2 : 1))
+  const initialSnapshot = useRef<StoredDraft<CertDraft> | null>(storage.getDraftSnapshot<CertDraft>('certificates')).current
+  const hasUnsavedWork = Boolean(
+    initialSnapshot &&
+    initialSnapshot.data &&
+    (
+      (initialSnapshot.data.participants && initialSnapshot.data.participants.length > 0) ||
+      (initialSnapshot.data.step && initialSnapshot.data.step > 1) ||
+      (initialSnapshot.data.cert && (
+        initialSnapshot.data.cert.title !== initialCertificate.title ||
+        initialSnapshot.data.cert.event !== initialCertificate.event ||
+        initialSnapshot.data.cert.venue !== initialCertificate.venue ||
+        initialSnapshot.data.cert.signatory !== initialCertificate.signatory ||
+        initialSnapshot.data.cert.backgroundImageUrl ||
+        initialSnapshot.data.cert.logoUrl
+      ))
+    )
+  )
+
+  const [recoveredDraft, setRecoveredDraft] = useState<StoredDraft<CertDraft> | null>(hasUnsavedWork ? initialSnapshot : null)
+  const [participants, setParticipants] = useState<string[][]>([])
+  const [headers, setHeaders] = useState<string[]>([])
+  const [fileName, setFileName] = useState('')
+  const [cert, setCert] = useState<CertificateData>(initialCertificate)
+  const [index, setIndex] = useState(0)
+  const [step, setStep] = useState(1)
+  const [lastSaved, setLastSaved] = useState<string | null>(null)
   const [templatesOpen, setTemplatesOpen] = useState(false)
   const [zoom, setZoom] = useState(0.65)
   const [qrPreviewUrl, setQrPreviewUrl] = useState('')
@@ -94,11 +113,70 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
   const bgInputRef = useRef<HTMLInputElement>(null)
 
   // Mapping state
-  const [nameCol, setNameCol] = useState(draft.nameCol || '')
-  const [orgCol, setOrgCol] = useState(draft.orgCol || '')
-  const [eventCol, setEventCol] = useState(draft.eventCol || '')
-  const [dateCol, setDateCol] = useState(draft.dateCol || '')
-  const [venueCol, setVenueCol] = useState(draft.venueCol || '')
+  const [nameCol, setNameCol] = useState('')
+  const [orgCol, setOrgCol] = useState('')
+  const [eventCol, setEventCol] = useState('')
+  const [dateCol, setDateCol] = useState('')
+  const [venueCol, setVenueCol] = useState('')
+
+  const handleRestore = () => {
+    if (recoveredDraft?.data) {
+      const d = recoveredDraft.data
+      setParticipants(d.participants || [])
+      setHeaders(d.headers || [])
+      setFileName(d.fileName || '')
+      setCert(d.cert || initialCertificate)
+      setIndex(d.index || 0)
+      setStep(d.step || (d.participants?.length ? 2 : 1))
+      setNameCol(d.nameCol || '')
+      setOrgCol(d.orgCol || '')
+      setEventCol(d.eventCol || '')
+      setDateCol(d.dateCol || '')
+      setVenueCol(d.venueCol || '')
+      setLastSaved(recoveredDraft.savedAt)
+      setRecoveredDraft(null)
+      notify('Certificate project restored from previous session')
+    }
+  }
+
+  const handleDiscard = () => {
+    storage.clearDraft('certificates')
+    setRecoveredDraft(null)
+    setParticipants([])
+    setHeaders([])
+    setFileName('')
+    setCert(initialCertificate)
+    setStep(1)
+    setIndex(0)
+    setLastSaved(null)
+    notify('Draft discarded. Started blank certificate project.')
+  }
+
+  const handleNewProject = () => {
+    const isModified = Boolean(
+      participants.length > 0 ||
+      step > 1 ||
+      cert.title !== initialCertificate.title ||
+      cert.event !== initialCertificate.event ||
+      cert.venue !== initialCertificate.venue ||
+      cert.signatory !== initialCertificate.signatory ||
+      cert.backgroundImageUrl ||
+      cert.logoUrl
+    )
+    if (isModified && !confirm('Start a new certificate project? Any unsaved changes in current draft will be cleared.')) {
+      return
+    }
+    storage.clearDraft('certificates')
+    setRecoveredDraft(null)
+    setParticipants([])
+    setHeaders([])
+    setFileName('')
+    setCert(initialCertificate)
+    setStep(1)
+    setIndex(0)
+    setLastSaved(null)
+    notify('Created new blank certificate project')
+  }
 
   const participantRaw = participants[index] || []
   const resolvedCurrent = participants.length
@@ -130,6 +208,8 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
   }, [cert.includeQr, cert.title, cert.date, resolvedCurrent.name, resolvedCurrent.id, resolvedCurrent.date])
 
   useEffect(() => {
+    if (recoveredDraft) return
+
     const isModified = Boolean(
       participants.length > 0 ||
       step > 1 ||
@@ -144,7 +224,8 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
     onDirtyChange?.(isModified)
     if (isModified) {
       const payload: CertDraft = { participants, headers, fileName, cert, step, index, nameCol, orgCol, eventCol, dateCol, venueCol }
-      storage.saveDraft('certificates', payload)
+      const savedTime = storage.saveDraft('certificates', payload, cert.title ? `${cert.title} (${cert.event || fileName || 'Batch'})` : 'Certificate Project')
+      setLastSaved(savedTime)
       onSnapshotChange?.({
         label: cert.title ? `${cert.title} (${cert.event || fileName || 'Batch'})` : 'Certificate Project',
         summary: `${participants.length ? `${participants.length} participants` : 'Template setup'} • ${cert.event || 'Custom Event'}`,
@@ -153,9 +234,10 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
       })
     } else {
       storage.clearDraft('certificates')
+      setLastSaved(null)
       onSnapshotChange?.(null)
     }
-  }, [participants, headers, fileName, cert, step, index, nameCol, orgCol, eventCol, dateCol, venueCol, isGenerating, onDirtyChange, onSnapshotChange])
+  }, [participants, headers, fileName, cert, step, index, nameCol, orgCol, eventCol, dateCol, venueCol, isGenerating, recoveredDraft, onDirtyChange, onSnapshotChange])
 
   const importList = async (file?: File) => {
     if (!file) return
@@ -312,6 +394,10 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
       >
         <div className="header-actions">
           <LocalBadge />
+          <AutoSaveStatus lastSaved={lastSaved} isDirty={Boolean(lastSaved)} />
+          <button type="button" className="button secondary" onClick={handleNewProject}>
+            New Project
+          </button>
           <button className="button secondary" onClick={() => setTemplatesOpen(true)}>
             <LayoutTemplate size={16} /> Templates
           </button>
@@ -320,6 +406,15 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
           </button>
         </div>
       </PageTitle>
+
+      {recoveredDraft && (
+        <CrashRecoveryBanner
+          savedAt={recoveredDraft.savedAt}
+          title={recoveredDraft.title || (recoveredDraft.data?.participants?.length ? `${recoveredDraft.data.participants.length} participants` : recoveredDraft.data?.cert?.title)}
+          onRestore={handleRestore}
+          onDiscard={handleDiscard}
+        />
+      )}
 
       {/* Stepper Header */}
       <div className="steps-bar">

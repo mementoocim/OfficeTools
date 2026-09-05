@@ -18,6 +18,13 @@ const set = <T,>(name: string, value: T) => {
 }
 const remove = (name: string) => localStorage.removeItem(key(name))
 
+export interface StoredDraft<T = unknown> {
+  savedAt: string
+  timestamp: number
+  title?: string
+  data: T
+}
+
 export const storage = {
   recent: () => get<RecentFile[]>('recent', []),
   saveRecent: (item: RecentFile) => set('recent', [item, ...storage.recent().filter(x => x.id !== item.id)].slice(0, 20)),
@@ -30,8 +37,41 @@ export const storage = {
   saveArchive: (item: ArchivedItem) => set('archives', [item, ...storage.archives().filter(x => x.id !== item.id)]),
   deleteArchive: (id: string) => set('archives', storage.archives().filter(x => x.id !== id)),
   clearArchives: () => set('archives', []),
-  getDraft: <T,>(tool: string, fallback: T): T => get<T>(`draft:${tool}`, fallback),
-  saveDraft: <T,>(tool: string, data: T) => set(`draft:${tool}`, data),
+  getDraft: <T,>(tool: string, fallback: T): T => {
+    const stored = get<StoredDraft<T> | T | null>(`draft:${tool}`, null)
+    if (!stored) return fallback
+    if (typeof stored === 'object' && stored !== null && 'data' in stored && 'timestamp' in stored) {
+      return (stored as StoredDraft<T>).data
+    }
+    return stored as T
+  },
+  getDraftSnapshot: <T,>(tool: string): StoredDraft<T> | null => {
+    const stored = get<StoredDraft<T> | T | null>(`draft:${tool}`, null)
+    if (!stored) return null
+    if (typeof stored === 'object' && stored !== null && 'data' in stored && 'timestamp' in stored) {
+      return stored as StoredDraft<T>
+    }
+    return {
+      savedAt: 'recently',
+      timestamp: Date.now(),
+      data: stored as T
+    }
+  },
+  saveDraft: <T,>(tool: string, data: T, title?: string): string => {
+    const formatted = new Date().toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    })
+    const snapshot: StoredDraft<T> = {
+      savedAt: formatted,
+      timestamp: Date.now(),
+      title,
+      data
+    }
+    set(`draft:${tool}`, snapshot)
+    return formatted
+  },
   clearDraft: (tool: string) => remove(`draft:${tool}`),
   settings: () => get('settings', { theme: 'system', rememberRecent: true, defaultExport: 'PDF' }),
   saveSettings: (value: Record<string, unknown>) => set('settings', value),
