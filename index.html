@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Office Toolkit</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <script>
+      (function () {
+        try {
+          var raw = localStorage.getItem('office-toolkit:settings');
+          var theme = 'system';
+          if (raw) {
+            var parsed = JSON.parse(raw);
+            if (parsed && parsed.theme) theme = parsed.theme;
+          }
+          document.documentElement.dataset.theme = theme;
+          var isDark =
+            theme === 'dark' ||
+            (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (isDark) {
+            document.documentElement.style.backgroundColor = '#1b1b1d';
+            document.documentElement.style.color = '#eeeeef';
+          } else {
+            document.documentElement.style.backgroundColor = '#f6f6f3';
+            document.documentElement.style.color = '#252628';
+          }
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
