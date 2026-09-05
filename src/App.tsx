@@ -630,7 +630,7 @@ function ConfirmLeaveModal({
   const targetLabel = targetPage ? (pageTitles[targetPage] || targetPage) : 'another page'
 
   return (
-    <div className="modal-backdrop" onMouseDown={onCancel}>
+    <div className="modal-backdrop centered-backdrop" onMouseDown={onCancel}>
       <div
         className="modal confirm-leave-modal"
         onMouseDown={e => e.stopPropagation()}
