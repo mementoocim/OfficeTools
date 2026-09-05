@@ -383,6 +383,16 @@ export default function App() {
           }}
           onSignOut={handleSignOut}
           onOpenOnboarding={() => setOnboardingOpen(true)}
+          onResetAllData={() => {
+            if (confirm('Are you sure you want to reset all local data? This will clear all local templates, archives, recent files, and cached drafts. This cannot be undone.')) {
+              storage.clearAllData()
+              setRecent([])
+              setTemplates([])
+              setArchives([])
+              setDirty(false)
+              notify('All local storage data and drafts have been reset.')
+            }
+          }}
         />
       )}
       {page === 'admin' && <AdminPanel currentUser={currentUser} onNotify={notify} />}
@@ -2441,7 +2451,8 @@ function Settings({
   currentUser,
   onOpenAuth,
   onSignOut,
-  onOpenOnboarding
+  onOpenOnboarding,
+  onResetAllData
 }: {
   theme: string
   setTheme: (v: string) => void
@@ -2454,6 +2465,7 @@ function Settings({
   onOpenAuth: (tab?: 'login' | 'register' | 'forgot' | 'setup') => void
   onSignOut: () => void
   onOpenOnboarding?: () => void
+  onResetAllData: () => void
 }) {
   const config = getSupabaseConfig()
 
@@ -2549,9 +2561,10 @@ function Settings({
           <span>Recent metadata <b>{storage.recent().length}</b></span>
         </div>
         <div className="header-actions">
-          <button className="button secondary" onClick={clearRecent}>Clear recent history</button>
-          <button className="button secondary" onClick={clearArchives}>Clear archives</button>
-          <button className="button danger-button" onClick={clearTemplates}>Clear templates</button>
+          <button type="button" className="button secondary" onClick={clearRecent}>Clear recent history</button>
+          <button type="button" className="button secondary" onClick={clearArchives}>Clear archives</button>
+          <button type="button" className="button secondary" onClick={clearTemplates}>Clear templates</button>
+          <button type="button" className="button danger-button" onClick={onResetAllData}>Reset all local data</button>
         </div>
       </section>
       <section>

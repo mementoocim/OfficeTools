@@ -35,4 +35,18 @@ export const storage = {
   clearDraft: (tool: string) => remove(`draft:${tool}`),
   settings: () => get('settings', { theme: 'system', rememberRecent: true, defaultExport: 'PDF' }),
   saveSettings: (value: Record<string, unknown>) => set('settings', value),
+  clearAllData: () => {
+    try {
+      const keysToRemove: string[] = []
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)
+        if (k && (k.startsWith('office-toolkit:') || k.startsWith('office_toolkit_'))) {
+          keysToRemove.push(k)
+        }
+      }
+      keysToRemove.forEach(k => localStorage.removeItem(k))
+    } catch (e) {
+      console.warn('Failed to clear all data from localStorage', e)
+    }
+  }
 }
