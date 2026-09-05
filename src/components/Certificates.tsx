@@ -486,7 +486,6 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
 
             <div className="clean-helper-banner">
               <div className="clean-helper-info">
-                <Sparkles size={16} className="clean-helper-icon" />
                 <div>
                   <strong>Need to fix messy participant text casing?</strong>
                   <p>
@@ -518,7 +517,7 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
                     )
                   }}
                 >
-                  <Sparkles size={13} /> Every Word (Ilagan City)
+                  Every Word (Ilagan City)
                 </button>
                 <button
                   type="button"

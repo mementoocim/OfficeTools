@@ -1,4 +1,4 @@
-export type Page = 'home' | 'documents' | 'spreadsheets' | 'reports' | 'certificates' | 'templates' | 'archives' | 'recent' | 'settings'
+export type Page = 'home' | 'documents' | 'spreadsheets' | 'reports' | 'certificates' | 'templates' | 'archives' | 'recent' | 'settings' | 'admin'
 
 export type ArchivedItem = {
   id: string
@@ -26,7 +26,13 @@ export type SavedTemplate = {
   payload: unknown
 }
 
-export type SpreadsheetData = { name: string; headers: string[]; rows: string[][]; sheets: string[] }
+export type SpreadsheetData = {
+  name: string
+  headers: string[]
+  rows: string[][]
+  sheets: string[]
+  addedColumns?: string[]
+}
 
 export type DocumentData = {
   type: string; date: string; recipientName: string; recipientPosition: string; organization: string;
