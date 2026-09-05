@@ -19,7 +19,7 @@ import {
   Upload,
   Wand2
 } from 'lucide-react'
-import type { CertificateBorderStyle, CertificateData, RecentFile, SavedTemplate } from '../types'
+import type { CertificateBorderStyle, CertificateData, ImportStatus, RecentFile, SavedTemplate } from '../types'
 import { readSpreadsheet, toTitleCase, toFirstLetterCase } from '../lib/spreadsheet'
 import {
   exportCombinedCertificatesPdf,
@@ -35,6 +35,7 @@ interface CertificatesProps {
   saveTemplate: (t: SavedTemplate) => void
   addRecent: (f: RecentFile) => void
   notify: (msg: string) => void
+  onImportStatus?: (status: ImportStatus | null) => void
 }
 
 const id = () => crypto.randomUUID()
@@ -55,7 +56,7 @@ export const initialCertificate: CertificateData = {
   qrPrefix: 'CERT'
 }
 
-export function Certificates({ templates, saveTemplate, addRecent, notify }: CertificatesProps) {
+export function Certificates({ templates, saveTemplate, addRecent, notify, onImportStatus }: CertificatesProps) {
   const [participants, setParticipants] = useState<string[][]>([])
   const [headers, setHeaders] = useState<string[]>([])
   const [fileName, setFileName] = useState('')
@@ -112,6 +113,7 @@ export function Certificates({ templates, saveTemplate, addRecent, notify }: Cer
 
   const importList = async (file?: File) => {
     if (!file) return
+    onImportStatus?.({ name: file.name, status: 'loading', message: 'Reading participant list...' })
     try {
       const data = await readSpreadsheet(file)
       setFileName(file.name)
@@ -129,9 +131,16 @@ export function Certificates({ templates, saveTemplate, addRecent, notify }: Cer
       setVenueCol(findCol(/venue|location/i))
 
       setStep(2)
+      onImportStatus?.({
+        name: file.name,
+        status: 'success',
+        message: `Imported ${validRows.length.toLocaleString()} participants`
+      })
       notify(`Imported ${validRows.length} participants from ${file.name}`)
     } catch (e) {
-      notify(e instanceof Error ? e.message : 'Unable to read participant list.')
+      const err = e instanceof Error ? e.message : 'Unable to read participant list.'
+      onImportStatus?.({ name: file.name, status: 'error', message: err })
+      notify(err)
     }
   }
 
@@ -142,9 +151,12 @@ export function Certificates({ templates, saveTemplate, addRecent, notify }: Cer
     const file = e.target.files?.[0]
     if (!file) return
     if (!file.type.startsWith('image/')) {
-      notify('Please select a valid image file (PNG, JPG).')
+      const err = 'Please select a valid image file (PNG, JPG).'
+      onImportStatus?.({ name: file.name, status: 'error', message: err })
+      notify(err)
       return
     }
+    onImportStatus?.({ name: file.name, status: 'loading', message: 'Loading image...' })
     const reader = new FileReader()
     reader.onload = () => {
       if (typeof reader.result === 'string') {
@@ -161,8 +173,12 @@ export function Certificates({ templates, saveTemplate, addRecent, notify }: Cer
               }
             : {})
         }))
+        onImportStatus?.({ name: file.name, status: 'success', message: 'Image loaded successfully' })
         notify(key === 'backgroundImageUrl' ? 'Canva template background loaded!' : 'Image loaded successfully')
       }
+    }
+    reader.onerror = () => {
+      onImportStatus?.({ name: file.name, status: 'error', message: 'Failed to read image file' })
     }
     reader.readAsDataURL(file)
   }

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, ArrowUpDown, BookOpenText, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, FileDown, FileSpreadsheet, FileText, Keyboard, LayoutTemplate, Medal, MoreHorizontal, Plus, Printer, RotateCcw, Save, Sparkles, Trash2, Upload, WandSparkles } from 'lucide-react'
+import { AlertCircle, ArrowDown, ArrowUp, ArrowUpDown, BookOpenText, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, FileDown, FileSpreadsheet, FileText, Keyboard, LayoutTemplate, Loader2, Medal, MoreHorizontal, Plus, Printer, RotateCcw, Save, Sparkles, Trash2, Upload, WandSparkles, X } from 'lucide-react'
 import { AppSidebar } from './components/AppSidebar'
 import { Certificates } from './components/Certificates'
 import { EmptyState, LocalBadge, Modal, PageTitle, SearchField, ToolCard } from './components/Common'
-import type { CertificateData, DocumentData, Page, RecentFile, ReportSection, SavedTemplate, SpreadsheetData } from './types'
+import type { CertificateData, DocumentData, ImportStatus, Page, RecentFile, ReportSection, SavedTemplate, SpreadsheetData } from './types'
 import { storage } from './lib/storage'
 import { cleanRows, exportSpreadsheet, readSpreadsheet, toTitleCase, toFirstLetterCase, type CleanMode } from './lib/spreadsheet'
 import { exportDocx, exportPdf } from './lib/export'
@@ -31,6 +31,16 @@ export default function App() {
   const [templates, setTemplates] = useState<SavedTemplate[]>(storage.templates())
   const [theme, setTheme] = useState<string>(String(storage.settings().theme || 'system'))
   const [notice, setNotice] = useState('')
+  const [importStatus, setImportStatus] = useState<ImportStatus | null>(null)
+
+  const handleImportStatus = (status: ImportStatus | null) => {
+    setImportStatus(status)
+    if (status && status.status !== 'loading') {
+      setTimeout(() => {
+        setImportStatus(curr => (curr === status ? null : curr))
+      }, status.status === 'success' ? 3200 : 4500)
+    }
+  }
 
   const setPage = (next: Page) => {
     setPageState(next)
@@ -68,15 +78,45 @@ export default function App() {
     <main className="main-content">
       {page === 'home' && <Home setPage={setPage} recent={recent} setRecent={setRecent} />}
       {page === 'documents' && <Documents templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} notify={notify} />}
-      {page === 'spreadsheets' && <Spreadsheets addRecent={addRecent} notify={notify} />}
+      {page === 'spreadsheets' && <Spreadsheets addRecent={addRecent} notify={notify} onImportStatus={handleImportStatus} />}
       {page === 'reports' && <Reports templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} notify={notify} />}
-      {page === 'certificates' && <Certificates templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} notify={notify} />}
+      {page === 'certificates' && <Certificates templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} notify={notify} onImportStatus={handleImportStatus} />}
       {page === 'templates' && <Templates templates={templates} useTemplate={(t) => { setPage(t.category === 'Document' ? 'documents' : t.category === 'Report' ? 'reports' : 'certificates'); notify(`Open ${t.category} and choose ${t.name} from templates`) }} remove={removeTemplate} />}
       {page === 'recent' && <RecentFiles recent={recent} setRecent={setRecent} />}
       {page === 'settings' && <Settings theme={theme} setTheme={setTheme} clearRecent={() => { if (confirm('Clear all recent file history?')) { storage.clearRecent(); setRecent([]) } }} templates={templates} clearTemplates={() => { if (confirm('Delete all saved templates?')) { templates.forEach(t => storage.deleteTemplate(t.id)); setTemplates([]) } }} />}
     </main>
     <button className="command-hint" onClick={() => setCommandOpen(true)}><Keyboard size={15}/> Command menu <kbd>Ctrl K</kbd></button>
     {notice && <div className="toast">{notice}</div>}
+    {importStatus && (
+      <aside className={`import-toast ${importStatus.status}`} aria-live="polite">
+        <div className="import-toast-icon">
+          {importStatus.status === 'loading' && <Loader2 size={16} className="spinner" />}
+          {importStatus.status === 'success' && <CheckCircle2 size={16} />}
+          {importStatus.status === 'error' && <AlertCircle size={16} />}
+        </div>
+        <div className="import-toast-content">
+          <strong className="import-toast-title">
+            {importStatus.status === 'loading' && 'Importing File...'}
+            {importStatus.status === 'success' && 'File Ready'}
+            {importStatus.status === 'error' && 'Import Error'}
+          </strong>
+          <span className="import-toast-sub">
+            {importStatus.message || importStatus.name}
+          </span>
+          {importStatus.status === 'loading' && (
+            <span className="import-toast-filename">{importStatus.name}</span>
+          )}
+        </div>
+        <button
+          type="button"
+          className="import-toast-close"
+          onClick={() => setImportStatus(null)}
+          title="Dismiss"
+        >
+          <X size={13} />
+        </button>
+      </aside>
+    )}
     {commandOpen && <CommandPalette close={() => setCommandOpen(false)} open={(p) => { setPage(p); setCommandOpen(false) }} />}
   </div>
 }
@@ -104,7 +144,11 @@ function Documents({ templates, saveTemplate, addRecent, notify }: { templates: 
 function documentLines(doc: DocumentData) { return [doc.date, '', doc.recipientName, doc.recipientPosition, doc.organization, doc.address, '', doc.subject ? `Subject: ${doc.subject}` : '', '', doc.greeting, '', ...doc.body.split('\n'), '', doc.closing, '', doc.senderName, doc.senderPosition].filter((x, i, arr) => x || (i > 0 && arr[i - 1] !== '')) }
 function Paper({ zoom, lines, certificate = false }: { zoom: number; lines: string[]; certificate?: boolean }) { return <div className={`paper-wrap ${certificate ? 'certificate-paper' : ''}`}><article className="paper" style={{ transform: `scale(${zoom})`, transformOrigin: 'top center', marginBottom: `${(zoom - 1) * 1080}px` }}>{certificate ? <div className="certificate-inner">{lines.map((line, i) => <p key={i} className={i === 0 ? 'certificate-title' : ''}>{line || ' '}</p>)}</div> : lines.map((line, i) => <p key={i} className={line.startsWith('Subject:') ? 'subject-line' : ''}>{line || ' '}</p>)}</article></div> }
 
-function Spreadsheets({ addRecent, notify }: { addRecent: (x: RecentFile) => void; notify: (s: string) => void }) {
+function Spreadsheets({ addRecent, notify, onImportStatus }: {
+  addRecent: (x: RecentFile) => void
+  notify: (s: string) => void
+  onImportStatus?: (status: ImportStatus | null) => void
+}) {
   const [data, setData] = useState<SpreadsheetData | null>(null)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
@@ -116,7 +160,13 @@ function Spreadsheets({ addRecent, notify }: { addRecent: (x: RecentFile) => voi
 
   const importFile = async (file?: File) => {
     if (!file) return
-    if (!/\.(xlsx|xls|csv)$/i.test(file.name)) return setError('Unsupported format. Choose an .xlsx, .xls, or .csv file.')
+    if (!/\.(xlsx|xls|csv)$/i.test(file.name)) {
+      const err = 'Unsupported format. Choose an .xlsx, .xls, or .csv file.'
+      setError(err)
+      onImportStatus?.({ name: file.name, status: 'error', message: err })
+      return
+    }
+    onImportStatus?.({ name: file.name, status: 'loading', message: 'Reading spreadsheet...' })
     try {
       const result = await readSpreadsheet(file)
       setData(result)
@@ -126,9 +176,16 @@ function Spreadsheets({ addRecent, notify }: { addRecent: (x: RecentFile) => voi
       setSortAsc(true)
       setError('')
       addRecent({ id: id(), name: file.name, type: 'Spreadsheet', modified: 'Just now' })
+      onImportStatus?.({
+        name: file.name,
+        status: 'success',
+        message: `Imported ${result.rows.length.toLocaleString()} rows (${result.headers.length} columns)`
+      })
       notify(`Imported ${result.rows.length.toLocaleString()} rows`)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to read this spreadsheet.')
+      const err = e instanceof Error ? e.message : 'Unable to read this spreadsheet.'
+      setError(err)
+      onImportStatus?.({ name: file.name, status: 'error', message: err })
     }
   }
 

@@ -57,3 +57,9 @@ export type CertificateData = {
   sig2X?: number
   sig2Y?: number
 }
+
+export type ImportStatus = {
+  name: string
+  status: 'loading' | 'success' | 'error'
+  message?: string
+}
