@@ -77,7 +77,18 @@ create table if not exists public.profiles (
 -- 2. Enable Row Level Security (RLS)
 alter table public.profiles enable row level security;
 
--- 3. Security Definer helper function to check admin status without recursive RLS loop
+-- 3. DROP ALL existing policies on profiles dynamically (Clears any old recursive policies completely)
+do $$ 
+declare 
+    r record;
+begin
+    for r in (select policyname from pg_policies where tablename = 'profiles' and schemaname = 'public') 
+    loop
+        execute format('drop policy if exists %I on public.profiles', r.policyname);
+    end loop;
+end $$;
+
+-- 4. Helper function to check admin status without recursive RLS loop
 create or replace function public.is_admin()
 returns boolean as $$
 begin
@@ -88,35 +99,29 @@ begin
 end;
 $$ language plpgsql security definer set search_path = public;
 
--- 4. Clean and Non-recursive RLS Policies
-drop policy if exists "Public profiles are viewable by authenticated users" on public.profiles;
-drop policy if exists "Public profiles are viewable by everyone" on public.profiles;
-drop policy if exists "Users can update own profile" on public.profiles;
-drop policy if exists "Admins can update all profiles" on public.profiles;
-drop policy if exists "Allow authenticated select" on public.profiles;
-drop policy if exists "Allow update self or admin" on public.profiles;
-drop policy if exists "Allow insert self or admin" on public.profiles;
-
--- Authenticated users can view all profiles
-create policy "Allow authenticated select"
+-- 5. Create fresh, clean RLS policies
+create policy "profiles_select_policy"
   on public.profiles for select
   to authenticated
   using (true);
 
--- Users can insert their own profile, or admins can insert
-create policy "Allow insert self or admin"
+create policy "profiles_insert_policy"
   on public.profiles for insert
   to authenticated
   with check (auth.uid() = id or public.is_admin());
 
--- Users can update their own profile, or admins can update any profile
-create policy "Allow update self or admin"
+create policy "profiles_update_policy"
   on public.profiles for update
   to authenticated
   using (auth.uid() = id or public.is_admin())
   with check (auth.uid() = id or public.is_admin());
 
--- 5. Trigger to automatically create profile on signup (1st user becomes admin)
+create policy "profiles_delete_policy"
+  on public.profiles for delete
+  to authenticated
+  using (public.is_admin());
+
+-- 6. Trigger to automatically create profile on signup (1st user becomes admin)
 create or replace function public.handle_new_user()
 returns trigger as $$
 declare
@@ -148,4 +153,16 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
+
+-- 7. Sync existing auth users into public.profiles as admin
+insert into public.profiles (id, email, full_name, role, status)
+select 
+  id, 
+  email, 
+  coalesce(raw_user_meta_data->>'full_name', split_part(email, '@', 1)), 
+  'admin', 
+  'active'
+from auth.users
+on conflict (id) do update 
+set role = 'admin', status = 'active';
 `
