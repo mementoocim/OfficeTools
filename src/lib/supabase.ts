@@ -1,8 +1,8 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseConfig } from '../types/auth'
 
-const DEFAULT_SUPABASE_URL = ''
-const DEFAULT_SUPABASE_ANON_KEY = ''
+const DEFAULT_SUPABASE_URL = 'https://slejllqkskxdbguxphjl.supabase.co'
+const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable_hAdtJdLE9RRq-vn3LVxfpg_K9Ah2f7G'
 
 const STORAGE_URL_KEY = 'office_toolkit_supabase_url'
 const STORAGE_KEY_KEY = 'office_toolkit_supabase_anon_key'
