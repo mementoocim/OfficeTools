@@ -20,6 +20,7 @@ import {
   Wand2
 } from 'lucide-react'
 import type { CertificateBorderStyle, CertificateData, ImportStatus, RecentFile, SavedTemplate } from '../types'
+import { storage } from '../lib/storage'
 import { readSpreadsheet, toTitleCase, toFirstLetterCase } from '../lib/spreadsheet'
 import {
   exportCombinedCertificatesPdf,
@@ -37,6 +38,7 @@ interface CertificatesProps {
   notify: (msg: string) => void
   onImportStatus?: (status: ImportStatus | null) => void
   onDirtyChange?: (dirty: boolean) => void
+  onSnapshotChange?: (snapshot: { label: string; summary: string; tool: 'certificates'; payload: unknown } | null) => void
 }
 
 const id = () => crypto.randomUUID()
@@ -57,13 +59,28 @@ export const initialCertificate: CertificateData = {
   qrPrefix: 'CERT'
 }
 
-export function Certificates({ templates, saveTemplate, addRecent, notify, onImportStatus, onDirtyChange }: CertificatesProps) {
-  const [participants, setParticipants] = useState<string[][]>([])
-  const [headers, setHeaders] = useState<string[]>([])
-  const [fileName, setFileName] = useState('')
-  const [cert, setCert] = useState<CertificateData>(initialCertificate)
-  const [index, setIndex] = useState(0)
-  const [step, setStep] = useState(1)
+interface CertDraft {
+  participants?: string[][]
+  headers?: string[]
+  fileName?: string
+  cert?: CertificateData
+  index?: number
+  step?: number
+  nameCol?: string
+  orgCol?: string
+  eventCol?: string
+  dateCol?: string
+  venueCol?: string
+}
+
+export function Certificates({ templates, saveTemplate, addRecent, notify, onImportStatus, onDirtyChange, onSnapshotChange }: CertificatesProps) {
+  const [draft] = useState<CertDraft>(() => storage.getDraft<CertDraft>('certificates', {}))
+  const [participants, setParticipants] = useState<string[][]>(draft.participants || [])
+  const [headers, setHeaders] = useState<string[]>(draft.headers || [])
+  const [fileName, setFileName] = useState(draft.fileName || '')
+  const [cert, setCert] = useState<CertificateData>(draft.cert || initialCertificate)
+  const [index, setIndex] = useState(draft.index || 0)
+  const [step, setStep] = useState(draft.step || (draft.participants?.length ? 2 : 1))
   const [templatesOpen, setTemplatesOpen] = useState(false)
   const [zoom, setZoom] = useState(0.65)
   const [qrPreviewUrl, setQrPreviewUrl] = useState('')
@@ -77,11 +94,11 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
   const bgInputRef = useRef<HTMLInputElement>(null)
 
   // Mapping state
-  const [nameCol, setNameCol] = useState('')
-  const [orgCol, setOrgCol] = useState('')
-  const [eventCol, setEventCol] = useState('')
-  const [dateCol, setDateCol] = useState('')
-  const [venueCol, setVenueCol] = useState('')
+  const [nameCol, setNameCol] = useState(draft.nameCol || '')
+  const [orgCol, setOrgCol] = useState(draft.orgCol || '')
+  const [eventCol, setEventCol] = useState(draft.eventCol || '')
+  const [dateCol, setDateCol] = useState(draft.dateCol || '')
+  const [venueCol, setVenueCol] = useState(draft.venueCol || '')
 
   const participantRaw = participants[index] || []
   const resolvedCurrent = participants.length
@@ -125,7 +142,20 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
       cert.logoUrl
     )
     onDirtyChange?.(isModified)
-  }, [participants.length, step, isGenerating, cert, onDirtyChange])
+    if (isModified) {
+      const payload: CertDraft = { participants, headers, fileName, cert, step, index, nameCol, orgCol, eventCol, dateCol, venueCol }
+      storage.saveDraft('certificates', payload)
+      onSnapshotChange?.({
+        label: cert.title ? `${cert.title} (${cert.event || fileName || 'Batch'})` : 'Certificate Project',
+        summary: `${participants.length ? `${participants.length} participants` : 'Template setup'} • ${cert.event || 'Custom Event'}`,
+        tool: 'certificates',
+        payload
+      })
+    } else {
+      storage.clearDraft('certificates')
+      onSnapshotChange?.(null)
+    }
+  }, [participants, headers, fileName, cert, step, index, nameCol, orgCol, eventCol, dateCol, venueCol, isGenerating, onDirtyChange, onSnapshotChange])
 
   const importList = async (file?: File) => {
     if (!file) return

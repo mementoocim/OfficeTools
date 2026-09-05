@@ -1,4 +1,14 @@
-export type Page = 'home' | 'documents' | 'spreadsheets' | 'reports' | 'certificates' | 'templates' | 'recent' | 'settings'
+export type Page = 'home' | 'documents' | 'spreadsheets' | 'reports' | 'certificates' | 'templates' | 'archives' | 'recent' | 'settings'
+
+export type ArchivedItem = {
+  id: string
+  label: string
+  tool: 'documents' | 'spreadsheets' | 'reports' | 'certificates'
+  toolTitle: string
+  savedAt: string
+  summary: string
+  payload: unknown
+}
 
 export type RecentFile = {
   id: string

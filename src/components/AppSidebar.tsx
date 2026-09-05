@@ -1,4 +1,4 @@
-import { BookOpenText, ChevronLeft, FileSpreadsheet, Files, FileText, Home, LayoutTemplate, Medal, Settings, TableProperties } from 'lucide-react'
+import { Archive, BookOpenText, ChevronLeft, FileSpreadsheet, Files, FileText, Home, LayoutTemplate, Medal, Settings, TableProperties } from 'lucide-react'
 import type { Page } from '../types'
 
 const items: { id: Page; label: string; icon: typeof Home; group?: string }[] = [
@@ -8,6 +8,7 @@ const items: { id: Page; label: string; icon: typeof Home; group?: string }[] = 
   { id: 'reports', label: 'Reports', icon: BookOpenText },
   { id: 'certificates', label: 'Certificates', icon: Medal },
   { id: 'templates', label: 'Templates', icon: LayoutTemplate, group: 'LIBRARY' },
+  { id: 'archives', label: 'Archives', icon: Archive },
   { id: 'recent', label: 'Recent Files', icon: Files },
 ]
 

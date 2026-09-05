@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, BookOpenText, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, FileDown, FileSpreadsheet, FileText, Keyboard, LayoutTemplate, Loader2, Medal, MoreHorizontal, Plus, Printer, RotateCcw, Save, Sparkles, Trash2, Upload, WandSparkles, X } from 'lucide-react'
+import { AlertCircle, AlertTriangle, Archive, ArrowDown, ArrowUp, ArrowUpDown, BookOpenText, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, FileDown, FileSpreadsheet, FileText, Keyboard, LayoutTemplate, Loader2, Medal, MoreHorizontal, Plus, Printer, RotateCcw, Save, Sparkles, Trash2, Upload, WandSparkles, X } from 'lucide-react'
 import { AppSidebar } from './components/AppSidebar'
 import { Certificates } from './components/Certificates'
 import { EmptyState, LocalBadge, Modal, PageTitle, SearchField, ToolCard } from './components/Common'
-import type { CertificateData, DocumentData, ImportStatus, Page, RecentFile, ReportSection, SavedTemplate, SpreadsheetData } from './types'
+import type { ArchivedItem, CertificateData, DocumentData, ImportStatus, Page, RecentFile, ReportSection, SavedTemplate, SpreadsheetData } from './types'
 import { storage } from './lib/storage'
 import { cleanRows, exportSpreadsheet, readSpreadsheet, toTitleCase, toFirstLetterCase, type CleanMode } from './lib/spreadsheet'
 import { exportDocx, exportPdf } from './lib/export'
@@ -13,7 +13,7 @@ const initialDocument: DocumentData = { type: 'Letter', date: new Date().toLocal
 const initialCertificate: CertificateData = { title: 'Certificate of Participation', subtitle: 'This certificate is proudly presented to', description: 'for successfully participating in\n\n{{event}}\n\nheld on {{date}}.', event: 'Training Program', date: new Date().toLocaleDateString(), venue: '', signatory: '', signatoryPosition: '', borderStyle: 'gold', includeQr: true }
 const defaultSections = (): ReportSection[] => ['Summary', 'Activities Conducted', 'Participants / Beneficiaries', 'Key Accomplishments', 'Issues / Concerns', 'Recommendations', 'Next Steps'].map(title => ({ id: id(), title, content: '', type: 'Text' }))
 
-const validPages: Page[] = ['home', 'documents', 'spreadsheets', 'reports', 'certificates', 'templates', 'recent', 'settings']
+const validPages: Page[] = ['home', 'documents', 'spreadsheets', 'reports', 'certificates', 'templates', 'archives', 'recent', 'settings']
 
 function getInitialPage(): Page {
   const hash = window.location.hash.replace(/^#\/?/, '') as Page
@@ -23,15 +23,36 @@ function getInitialPage(): Page {
   return 'home'
 }
 
+const toolNames: Record<string, string> = {
+  home: 'Home',
+  documents: 'Document Generator',
+  spreadsheets: 'Spreadsheet Tools',
+  reports: 'Report Builder',
+  certificates: 'Certificate Generator',
+  templates: 'Templates',
+  archives: 'Archives',
+  recent: 'Recent Files',
+  settings: 'Settings'
+}
+
 export default function App() {
   const [page, setPageState] = useState<Page>(getInitialPage)
   const [collapsed, setCollapsed] = useState(false)
   const [commandOpen, setCommandOpen] = useState(false)
   const [recent, setRecent] = useState<RecentFile[]>(storage.recent())
   const [templates, setTemplates] = useState<SavedTemplate[]>(storage.templates())
+  const [archives, setArchives] = useState<ArchivedItem[]>(storage.archives())
   const [theme, setTheme] = useState<string>(String(storage.settings().theme || 'system'))
   const [notice, setNotice] = useState('')
   const [importStatus, setImportStatus] = useState<ImportStatus | null>(null)
+
+  // Active snapshot for auto-archiving / draft state
+  const [activeSnapshot, setActiveSnapshot] = useState<{
+    label: string
+    summary: string
+    tool: 'documents' | 'spreadsheets' | 'reports' | 'certificates'
+    payload: unknown
+  } | null>(null)
 
   // Unsaved / active work state tracking
   const [dirty, setDirty] = useState(false)
@@ -79,6 +100,59 @@ export default function App() {
       forceNavigate(pendingPage)
     } else {
       setConfirmLeaveOpen(false)
+    }
+  }
+
+  const archiveAndLeave = (customLabel: string) => {
+    if (activeSnapshot) {
+      const label = customLabel.trim() || activeSnapshot.label || 'Saved Session'
+      const formattedTime = new Date().toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      })
+      const item: ArchivedItem = {
+        id: id(),
+        label,
+        tool: activeSnapshot.tool,
+        toolTitle: toolNames[activeSnapshot.tool] || activeSnapshot.tool,
+        savedAt: formattedTime,
+        summary: activeSnapshot.summary,
+        payload: activeSnapshot.payload
+      }
+      storage.saveArchive(item)
+      setArchives(storage.archives())
+      notify(`Saved "${label}" to Archives (${formattedTime})`)
+    }
+    if (pendingPage) {
+      forceNavigate(pendingPage)
+    } else {
+      setConfirmLeaveOpen(false)
+    }
+  }
+
+  const restoreArchive = (item: ArchivedItem) => {
+    storage.saveDraft(item.tool, item.payload)
+    forceNavigate(item.tool)
+    notify(`Restored "${item.label}" into ${item.toolTitle}`)
+  }
+
+  const deleteArchive = (archiveId: string) => {
+    if (confirm('Delete this archived session?')) {
+      storage.deleteArchive(archiveId)
+      setArchives(storage.archives())
+      notify('Archived session deleted')
+    }
+  }
+
+  const clearAllArchives = () => {
+    if (confirm('Delete all saved archives? This cannot be undone.')) {
+      storage.clearArchives()
+      setArchives([])
+      notify('All archives cleared')
     }
   }
 
@@ -141,13 +215,14 @@ export default function App() {
     <AppSidebar page={page} setPage={setPage} collapsed={collapsed} toggle={() => setCollapsed(!collapsed)} />
     <main className="main-content">
       {page === 'home' && <Home setPage={setPage} recent={recent} setRecent={setRecent} />}
-      {page === 'documents' && <Documents templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} notify={notify} onDirtyChange={setDirty} />}
-      {page === 'spreadsheets' && <Spreadsheets addRecent={addRecent} notify={notify} onImportStatus={handleImportStatus} onDirtyChange={setDirty} />}
-      {page === 'reports' && <Reports templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} notify={notify} onDirtyChange={setDirty} />}
-      {page === 'certificates' && <Certificates templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} notify={notify} onImportStatus={handleImportStatus} onDirtyChange={setDirty} />}
+      {page === 'documents' && <Documents templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} notify={notify} onDirtyChange={setDirty} onSnapshotChange={setActiveSnapshot} />}
+      {page === 'spreadsheets' && <Spreadsheets addRecent={addRecent} notify={notify} onImportStatus={handleImportStatus} onDirtyChange={setDirty} onSnapshotChange={setActiveSnapshot} />}
+      {page === 'reports' && <Reports templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} notify={notify} onDirtyChange={setDirty} onSnapshotChange={setActiveSnapshot} />}
+      {page === 'certificates' && <Certificates templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} notify={notify} onImportStatus={handleImportStatus} onDirtyChange={setDirty} onSnapshotChange={setActiveSnapshot} />}
       {page === 'templates' && <Templates templates={templates} useTemplate={(t) => { setPage(t.category === 'Document' ? 'documents' : t.category === 'Report' ? 'reports' : 'certificates'); notify(`Open ${t.category} and choose ${t.name} from templates`) }} remove={removeTemplate} />}
+      {page === 'archives' && <Archives archives={archives} restore={restoreArchive} remove={deleteArchive} clearAll={clearAllArchives} />}
       {page === 'recent' && <RecentFiles recent={recent} setRecent={setRecent} />}
-      {page === 'settings' && <Settings theme={theme} setTheme={setTheme} clearRecent={() => { if (confirm('Clear all recent file history?')) { storage.clearRecent(); setRecent([]) } }} templates={templates} clearTemplates={() => { if (confirm('Delete all saved templates?')) { templates.forEach(t => storage.deleteTemplate(t.id)); setTemplates([]) } }} />}
+      {page === 'settings' && <Settings theme={theme} setTheme={setTheme} clearRecent={() => { if (confirm('Clear all recent file history?')) { storage.clearRecent(); setRecent([]) } }} templates={templates} clearTemplates={() => { if (confirm('Delete all saved templates?')) { templates.forEach(t => storage.deleteTemplate(t.id)); setTemplates([]) } }} archives={archives} clearArchives={clearAllArchives} />}
     </main>
     <button className="command-hint" onClick={() => setCommandOpen(true)}><Keyboard size={15}/> Command menu <kbd>Ctrl K</kbd></button>
     {notice && <div className="toast">{notice}</div>}
@@ -185,7 +260,9 @@ export default function App() {
       <ConfirmLeaveModal
         currentPage={page}
         targetPage={pendingPage}
-        onConfirm={confirmLeave}
+        activeSnapshot={activeSnapshot}
+        onArchiveAndLeave={archiveAndLeave}
+        onConfirmLeave={confirmLeave}
         onCancel={cancelLeave}
       />
     )}
@@ -203,16 +280,20 @@ function Home({ setPage, recent, setRecent }: { setPage: (page: Page) => void; r
   </div></section><section className="recent-section"><div className="section-heading"><h2>Recent Files</h2>{recent.length > 0 && <button className="text-button" onClick={() => { if (confirm('Clear recent history?')) { storage.clearRecent(); setRecent([]) } }}>Clear history</button>}</div>{recent.length ? <RecentTable recent={recent.slice(0, 5)} /> : <EmptyState title="No recent files yet" text="Files and projects you work with will appear here." />}</section></div>
 }
 
-function Documents({ templates, saveTemplate, addRecent, notify, onDirtyChange }: {
+function Documents({ templates, saveTemplate, addRecent, notify, onDirtyChange, onSnapshotChange }: {
   templates: SavedTemplate[]
   saveTemplate: (x: SavedTemplate) => void
   addRecent: (x: RecentFile) => void
   notify: (s: string) => void
   onDirtyChange?: (dirty: boolean) => void
+  onSnapshotChange?: (snapshot: { label: string; summary: string; tool: 'documents'; payload: unknown } | null) => void
 }) {
-  const [doc, setDoc] = useState<DocumentData>(initialDocument), [zoom, setZoom] = useState(0.75), [templateOpen, setTemplateOpen] = useState(false)
+  const [doc, setDoc] = useState<DocumentData>(() => storage.getDraft<DocumentData>('documents', initialDocument))
+  const [zoom, setZoom] = useState(0.75)
+  const [templateOpen, setTemplateOpen] = useState(false)
   const update = (field: keyof DocumentData, value: string) => setDoc({ ...doc, [field]: value })
-  const title = doc.subject || `${doc.type} document`; const lines = documentLines(doc)
+  const title = doc.subject || `${doc.type} document`
+  const lines = documentLines(doc)
 
   useEffect(() => {
     const isModified = Boolean(
@@ -225,7 +306,19 @@ function Documents({ templates, saveTemplate, addRecent, notify, onDirtyChange }
       doc.body.trim() !== initialDocument.body.trim()
     )
     onDirtyChange?.(isModified)
-  }, [doc, onDirtyChange])
+    if (isModified) {
+      storage.saveDraft('documents', doc)
+      onSnapshotChange?.({
+        label: doc.subject.trim() || `${doc.type} (${doc.recipientName || 'Untitled'})`,
+        summary: `${doc.type} • ${doc.recipientName ? `To: ${doc.recipientName}` : 'In progress'}`,
+        tool: 'documents',
+        payload: doc
+      })
+    } else {
+      storage.clearDraft('documents')
+      onSnapshotChange?.(null)
+    }
+  }, [doc, onDirtyChange, onSnapshotChange])
 
   const loadTemplate = (template: SavedTemplate) => { setDoc(template.payload as DocumentData); setTemplateOpen(false); notify('Template loaded') }
   const save = () => { const name = prompt('Template name', doc.subject || 'Untitled Letter'); if (name) saveTemplate({ id: id(), name, category: 'Document', updatedAt: new Date().toLocaleString(), payload: doc }) }
@@ -236,13 +329,14 @@ function Documents({ templates, saveTemplate, addRecent, notify, onDirtyChange }
 function documentLines(doc: DocumentData) { return [doc.date, '', doc.recipientName, doc.recipientPosition, doc.organization, doc.address, '', doc.subject ? `Subject: ${doc.subject}` : '', '', doc.greeting, '', ...doc.body.split('\n'), '', doc.closing, '', doc.senderName, doc.senderPosition].filter((x, i, arr) => x || (i > 0 && arr[i - 1] !== '')) }
 function Paper({ zoom, lines, certificate = false }: { zoom: number; lines: string[]; certificate?: boolean }) { return <div className={`paper-wrap ${certificate ? 'certificate-paper' : ''}`}><article className="paper" style={{ transform: `scale(${zoom})`, transformOrigin: 'top center', marginBottom: `${(zoom - 1) * 1080}px` }}>{certificate ? <div className="certificate-inner">{lines.map((line, i) => <p key={i} className={i === 0 ? 'certificate-title' : ''}>{line || ' '}</p>)}</div> : lines.map((line, i) => <p key={i} className={line.startsWith('Subject:') ? 'subject-line' : ''}>{line || ' '}</p>)}</article></div> }
 
-function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange }: {
+function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange, onSnapshotChange }: {
   addRecent: (x: RecentFile) => void
   notify: (s: string) => void
   onImportStatus?: (status: ImportStatus | null) => void
   onDirtyChange?: (dirty: boolean) => void
+  onSnapshotChange?: (snapshot: { label: string; summary: string; tool: 'spreadsheets'; payload: unknown } | null) => void
 }) {
-  const [data, setData] = useState<SpreadsheetData | null>(null)
+  const [data, setData] = useState<SpreadsheetData | null>(() => storage.getDraft<SpreadsheetData | null>('spreadsheets', null))
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
   const [history, setHistory] = useState<SpreadsheetData[]>([])
@@ -252,8 +346,21 @@ function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange }: {
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    onDirtyChange?.(Boolean(data && data.rows.length > 0))
-  }, [data, onDirtyChange])
+    const hasData = Boolean(data && data.rows.length > 0)
+    onDirtyChange?.(hasData)
+    if (hasData && data) {
+      storage.saveDraft('spreadsheets', data)
+      onSnapshotChange?.({
+        label: data.name || 'Spreadsheet Dataset',
+        summary: `${data.rows.length.toLocaleString()} rows • ${data.headers.length} cols`,
+        tool: 'spreadsheets',
+        payload: data
+      })
+    } else {
+      storage.clearDraft('spreadsheets')
+      onSnapshotChange?.(null)
+    }
+  }, [data, onDirtyChange, onSnapshotChange])
 
   const importFile = async (file?: File) => {
     if (!file) return
@@ -567,14 +674,22 @@ function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange }: {
   )
 }
 
-function Reports({ templates, saveTemplate, addRecent, notify, onDirtyChange }: {
+function Reports({ templates, saveTemplate, addRecent, notify, onDirtyChange, onSnapshotChange }: {
   templates: SavedTemplate[]
   saveTemplate: (x: SavedTemplate) => void
   addRecent: (x: RecentFile) => void
   notify: (s: string) => void
   onDirtyChange?: (dirty: boolean) => void
+  onSnapshotChange?: (snapshot: { label: string; summary: string; tool: 'reports'; payload: unknown } | null) => void
 }) {
-  const [title, setTitle] = useState('Monthly Activity Report'), [period, setPeriod] = useState(''), [prepared, setPrepared] = useState('Mico'), [office, setOffice] = useState(''), [sections, setSections] = useState(defaultSections), [templatesOpen, setTemplatesOpen] = useState(false)
+  const [draft] = useState<{ title?: string; period?: string; prepared?: string; office?: string; sections?: ReportSection[] }>(() => storage.getDraft('reports', {}))
+  const [title, setTitle] = useState(draft.title || 'Monthly Activity Report')
+  const [period, setPeriod] = useState(draft.period || '')
+  const [prepared, setPrepared] = useState(draft.prepared || 'Mico')
+  const [office, setOffice] = useState(draft.office || '')
+  const [sections, setSections] = useState(draft.sections || defaultSections)
+  const [templatesOpen, setTemplatesOpen] = useState(false)
+
   const lines = [period && `Reporting period: ${period}`, prepared && `Prepared by: ${prepared}`, office && `Office / Unit: ${office}`, '', ...sections.flatMap(s => [s.title, ...s.content.split('\n'), ''])].filter(Boolean) as string[]
 
   useEffect(() => {
@@ -585,7 +700,20 @@ function Reports({ templates, saveTemplate, addRecent, notify, onDirtyChange }: 
       sections.some(s => s.content.trim() !== '')
     )
     onDirtyChange?.(isModified)
-  }, [title, period, office, sections, onDirtyChange])
+    if (isModified) {
+      const payload = { title, period, prepared, office, sections }
+      storage.saveDraft('reports', payload)
+      onSnapshotChange?.({
+        label: title || 'Activity Report',
+        summary: `${period ? `Period: ${period} • ` : ''}${sections.length} sections`,
+        tool: 'reports',
+        payload
+      })
+    } else {
+      storage.clearDraft('reports')
+      onSnapshotChange?.(null)
+    }
+  }, [title, period, office, sections, onDirtyChange, onSnapshotChange])
 
   const changeSection = (index: number, patch: Partial<ReportSection>) => setSections(sections.map((s, i) => i === index ? { ...s, ...patch } : s))
   const use = (template: SavedTemplate) => { const p = template.payload as { title: string; period: string; prepared: string; office: string; sections: ReportSection[] }; setTitle(p.title); setPeriod(p.period); setPrepared(p.prepared); setOffice(p.office); setSections(p.sections); setTemplatesOpen(false); notify('Report template loaded') }
@@ -595,39 +723,185 @@ function Reports({ templates, saveTemplate, addRecent, notify, onDirtyChange }: 
 
 function Templates({ templates, useTemplate, remove }: { templates: SavedTemplate[]; useTemplate: (t: SavedTemplate) => void; remove: (id: string) => void }) { const [search, setSearch] = useState(''); const results = templates.filter(t => t.name.toLowerCase().includes(search.toLowerCase())); return <div className="page"><PageTitle title="Templates" subtitle="Your reusable documents, reports and certificates."/><SearchField value={search} onChange={setSearch} placeholder="Search templates"/>{results.length ? <div className="template-list">{results.map(t => <article key={t.id}><span className="template-icon">{t.category === 'Document' ? <FileText/> : t.category === 'Report' ? <BookOpenText/> : <Medal/>}</span><div><h3>{t.name}</h3><p>{t.category} · Updated {t.updatedAt}</p></div><button className="button secondary" onClick={() => useTemplate(t)}>Use</button><button className="icon-button" title="Duplicate" onClick={() => { storage.saveTemplate({ ...t, id: id(), name: `${t.name} copy`, updatedAt: new Date().toLocaleString() }); location.reload() }}><Copy size={16}/></button><button className="icon-button danger" title="Delete" onClick={() => remove(t.id)}><Trash2 size={16}/></button></article>)}</div> : <EmptyState title="No templates yet" text="Save a document, report, or certificate as a reusable template."/>}</div> }
 
+function Archives({
+  archives,
+  restore,
+  remove,
+  clearAll
+}: {
+  archives: ArchivedItem[]
+  restore: (item: ArchivedItem) => void
+  remove: (id: string) => void
+  clearAll: () => void
+}) {
+  const [search, setSearch] = useState('')
+  const results = archives.filter(
+    a =>
+      a.label.toLowerCase().includes(search.toLowerCase()) ||
+      a.toolTitle.toLowerCase().includes(search.toLowerCase()) ||
+      (a.summary && a.summary.toLowerCase().includes(search.toLowerCase())) ||
+      a.savedAt.toLowerCase().includes(search.toLowerCase())
+  )
+
+  return (
+    <div className="page archives-page">
+      <PageTitle
+        title="Archives"
+        subtitle="Your saved snapshots and recovered project sessions with date and time."
+      >
+        {archives.length > 0 && (
+          <button className="button danger-button" onClick={clearAll}>
+            Clear all archives
+          </button>
+        )}
+      </PageTitle>
+
+      <SearchField value={search} onChange={setSearch} placeholder="Search archives by label, date, or tool..." />
+
+      {results.length ? (
+        <div className="template-list archive-list">
+          {results.map(item => (
+            <article key={item.id} className="archive-item">
+              <span className="template-icon">
+                {item.tool === 'documents' ? (
+                  <FileText />
+                ) : item.tool === 'spreadsheets' ? (
+                  <FileSpreadsheet />
+                ) : item.tool === 'reports' ? (
+                  <BookOpenText />
+                ) : (
+                  <Medal />
+                )}
+              </span>
+              <div className="archive-info">
+                <div className="archive-meta-row">
+                  <h3>{item.label}</h3>
+                  <span className="archive-tool-badge">{item.toolTitle}</span>
+                </div>
+                <p className="archive-subtext">
+                  <span>Saved: <b>{item.savedAt}</b></span>
+                  {item.summary && <span> • {item.summary}</span>}
+                </p>
+              </div>
+              <button className="button" onClick={() => restore(item)}>
+                Open in tool
+              </button>
+              <button
+                className="button danger-button"
+                onClick={() => remove(item.id)}
+                title="Delete this archive"
+              >
+                Delete
+              </button>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <EmptyState
+          title={search ? 'No matching archives' : 'No saved archives yet'}
+          text={
+            search
+              ? 'Try searching with a different keyword.'
+              : 'When working on a spreadsheet, document, or certificate, you can save snapshots to your archives to recover anytime.'
+          }
+        />
+      )}
+    </div>
+  )
+}
+
 function RecentFiles({ recent, setRecent }: { recent: RecentFile[]; setRecent: (items: RecentFile[]) => void }) { return <div className="page"><PageTitle title="Recent Files" subtitle="A lightweight history of work created in Office Toolkit."/>{recent.length ? <><RecentTable recent={recent}/><button className="button danger-button" onClick={() => { if (confirm('Clear all recent history?')) { storage.clearRecent(); setRecent([]) } }}>Clear recent history</button></> : <EmptyState title="No recent files yet" text="Files you work with will appear here."/>}</div> }
 function RecentTable({ recent }: { recent: RecentFile[] }) { return <div className="recent-table"><div className="recent-header"><span>Name</span><span>Type</span><span>Modified</span><span>Action</span></div>{recent.map(item => <div className="recent-row" key={item.id}><span className="filename">{item.type === 'Spreadsheet' ? <FileSpreadsheet size={17}/> : <FileText size={17}/>} {item.name}</span><span><i className={`type-dot ${item.type.toLowerCase()}`}/>{item.type}</span><span>{item.modified}</span><span><button className="text-button" onClick={() => alert('This recent entry stores metadata only. Re-import the original file to open it again.')}>Open</button><button className="more-button" title="More actions"><MoreHorizontal size={17}/></button></span></div>)}</div> }
 
-function Settings({ theme, setTheme, clearRecent, templates, clearTemplates }: { theme: string; setTheme: (v: string) => void; clearRecent: () => void; templates: SavedTemplate[]; clearTemplates: () => void }) { return <div className="page settings"><PageTitle title="Settings" subtitle="Personalize Office Toolkit and manage local data."/><section><h2>Appearance</h2><p>Theme</p><div className="segmented">{['light', 'dark', 'system'].map(x => <button key={x} className={theme === x ? 'selected' : ''} onClick={() => setTheme(x)}>{x[0].toUpperCase() + x.slice(1)}</button>)}</div></section><section><h2>Files</h2><label className="toggle-row"><span>Remember recent files<small>Store only metadata for imported files.</small></span><input type="checkbox" defaultChecked/></label><label>Default export format<select defaultValue="PDF"><option>PDF</option><option>DOCX</option><option>Excel</option></select></label></section><section><h2>Privacy</h2><div className="privacy-block"><LocalBadge/><p>Core document and spreadsheet operations are processed in your browser on this device. Office Toolkit does not automatically send your files anywhere.</p></div></section><section><h2>Storage</h2><div className="storage-list"><span>Saved templates <b>{templates.length}</b></span><span>Recent file metadata <b>{storage.recent().length}</b></span></div><div className="header-actions"><button className="button secondary" onClick={clearRecent}>Clear recent history</button><button className="button danger-button" onClick={clearTemplates}>Clear templates</button></div></section><section><h2>About</h2><p>Office Toolkit</p><small>Personal productivity utilities for repetitive office work. Version 0.1.0</small></section></div> }
+function Settings({ theme, setTheme, clearRecent, templates, clearTemplates, archives, clearArchives }: { theme: string; setTheme: (v: string) => void; clearRecent: () => void; templates: SavedTemplate[]; clearTemplates: () => void; archives: ArchivedItem[]; clearArchives: () => void }) {
+  return (
+    <div className="page settings">
+      <PageTitle title="Settings" subtitle="Personalize Office Toolkit and manage local data." />
+      <section>
+        <h2>Appearance</h2>
+        <p>Theme</p>
+        <div className="segmented">
+          {['light', 'dark', 'system'].map(x => (
+            <button key={x} className={theme === x ? 'selected' : ''} onClick={() => setTheme(x)}>
+              {x[0].toUpperCase() + x.slice(1)}
+            </button>
+          ))}
+        </div>
+      </section>
+      <section>
+        <h2>Files</h2>
+        <label className="toggle-row">
+          <span>Remember recent files<small>Store only metadata for imported files.</small></span>
+          <input type="checkbox" defaultChecked />
+        </label>
+        <label>Default export format
+          <select defaultValue="PDF">
+            <option>PDF</option>
+            <option>DOCX</option>
+            <option>Excel</option>
+          </select>
+        </label>
+      </section>
+      <section>
+        <h2>Privacy</h2>
+        <div className="privacy-block">
+          <LocalBadge />
+          <p>Core document and spreadsheet operations are processed in your browser on this device. Office Toolkit does not automatically send your files anywhere.</p>
+        </div>
+      </section>
+      <section>
+        <h2>Storage</h2>
+        <div className="storage-list">
+          <span>Saved templates <b>{templates.length}</b></span>
+          <span>Archived sessions <b>{archives.length}</b></span>
+          <span>Recent metadata <b>{storage.recent().length}</b></span>
+        </div>
+        <div className="header-actions">
+          <button className="button secondary" onClick={clearRecent}>Clear recent history</button>
+          <button className="button secondary" onClick={clearArchives}>Clear archives</button>
+          <button className="button danger-button" onClick={clearTemplates}>Clear templates</button>
+        </div>
+      </section>
+      <section>
+        <h2>About</h2>
+        <p>Office Toolkit</p>
+        <small>Personal productivity utilities for repetitive office work. Version 0.1.0</small>
+      </section>
+    </div>
+  )
+}
 
 function TemplateModal({ templates, load, close }: { templates: SavedTemplate[]; load: (t: SavedTemplate) => void; close: () => void }) { return <Modal title="Choose a template" close={close}>{templates.length ? <div className="template-picker">{templates.map(t => <button key={t.id} onClick={() => load(t)}><LayoutTemplate size={18}/><span><strong>{t.name}</strong><small>Updated {t.updatedAt}</small></span><ChevronRight size={17}/></button>)}</div> : <EmptyState title="No saved templates" text="Save your current work as a template to use it again."/>}</Modal> }
 
-function CommandPalette({ close, open }: { close: () => void; open: (page: Page) => void }) { const [query, setQuery] = useState(''); const actions: { name: string; page: Page; icon: typeof FileText }[] = [{ name: 'New Document', page: 'documents', icon: FileText }, { name: 'Import Spreadsheet', page: 'spreadsheets', icon: FileSpreadsheet }, { name: 'New Report', page: 'reports', icon: BookOpenText }, { name: 'Generate Certificates', page: 'certificates', icon: Medal }, { name: 'Open Templates', page: 'templates', icon: LayoutTemplate }, { name: 'Open Recent Files', page: 'recent', icon: FileText }, { name: 'Settings', page: 'settings', icon: FileText }]; const filtered = actions.filter(a => a.name.toLowerCase().includes(query.toLowerCase())); return <Modal title="Command menu" close={close}><SearchField value={query} onChange={setQuery} placeholder="Search commands..."/><div className="command-list">{filtered.map(a => <button key={a.name} onClick={() => open(a.page)}><a.icon size={17}/>{a.name}<ChevronRight size={16}/></button>)}</div></Modal> }
+function CommandPalette({ close, open }: { close: () => void; open: (page: Page) => void }) { const [query, setQuery] = useState(''); const actions: { name: string; page: Page; icon: typeof FileText }[] = [{ name: 'New Document', page: 'documents', icon: FileText }, { name: 'Import Spreadsheet', page: 'spreadsheets', icon: FileSpreadsheet }, { name: 'New Report', page: 'reports', icon: BookOpenText }, { name: 'Generate Certificates', page: 'certificates', icon: Medal }, { name: 'Open Templates', page: 'templates', icon: LayoutTemplate }, { name: 'Open Archives', page: 'archives', icon: Archive }, { name: 'Open Recent Files', page: 'recent', icon: FileText }, { name: 'Settings', page: 'settings', icon: FileText }]; const filtered = actions.filter(a => a.name.toLowerCase().includes(query.toLowerCase())); return <Modal title="Command menu" close={close}><SearchField value={query} onChange={setQuery} placeholder="Search commands..."/><div className="command-list">{filtered.map(a => <button key={a.name} onClick={() => open(a.page)}><a.icon size={17}/>{a.name}<ChevronRight size={16}/></button>)}</div></Modal> }
 
 function ConfirmLeaveModal({
   currentPage,
   targetPage,
-  onConfirm,
+  activeSnapshot,
+  onArchiveAndLeave,
+  onConfirmLeave,
   onCancel
 }: {
   currentPage: Page
   targetPage: Page | null
-  onConfirm: () => void
+  activeSnapshot: { label: string; summary: string; tool: 'documents' | 'spreadsheets' | 'reports' | 'certificates'; payload: unknown } | null
+  onArchiveAndLeave: (label: string) => void
+  onConfirmLeave: () => void
   onCancel: () => void
 }) {
-  const pageTitles: Record<Page, string> = {
-    home: 'Home',
-    documents: 'Document Generator',
-    spreadsheets: 'Spreadsheet Tools',
-    reports: 'Report Builder',
-    certificates: 'Certificate Generator',
-    templates: 'Templates',
-    recent: 'Recent Files',
-    settings: 'Settings'
-  }
+  const currentLabel = toolNames[currentPage] || currentPage
+  const targetLabel = targetPage ? (toolNames[targetPage] || targetPage) : 'another page'
+  const [label, setLabel] = useState(activeSnapshot?.label || `${currentLabel} Session`)
 
-  const currentLabel = pageTitles[currentPage] || currentPage
-  const targetLabel = targetPage ? (pageTitles[targetPage] || targetPage) : 'another page'
+  const defaultTimestamp = new Date().toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  })
 
   return (
     <div className="modal-backdrop centered-backdrop" onMouseDown={onCancel}>
@@ -646,17 +920,51 @@ function ConfirmLeaveModal({
           <div className="confirm-leave-text">
             <h2 id="confirm-modal-title">Leave with unsaved work?</h2>
             <p id="confirm-modal-desc">
-              You have active work or imported data in <strong>{currentLabel}</strong>. Leaving to go to <strong>{targetLabel}</strong> will reset your current progress.
+              You have active work in <strong>{currentLabel}</strong>. Leaving to go to <strong>{targetLabel}</strong> will reset your active session.
             </p>
           </div>
         </div>
-        <div className="confirm-leave-actions">
-          <button type="button" className="button secondary" onClick={onCancel} autoFocus>
-            Stay on {currentLabel}
-          </button>
-          <button type="button" className="button danger-button confirm-danger-btn" onClick={onConfirm}>
-            Leave and discard
-          </button>
+
+        {activeSnapshot && (
+          <div className="archive-prompt-card">
+            <div className="archive-prompt-header">
+              <span className="archive-prompt-title">Add to Archives</span>
+              <span className="archive-auto-time">{defaultTimestamp}</span>
+            </div>
+            <label className="archive-input-label">
+              <span>Archive Label:</span>
+              <input
+                type="text"
+                className="archive-label-input"
+                value={label}
+                onChange={e => setLabel(e.target.value)}
+                placeholder="Name this session..."
+              />
+            </label>
+            <p className="archive-prompt-hint">
+              {activeSnapshot.summary}
+            </p>
+          </div>
+        )}
+
+        <div className="confirm-leave-actions column">
+          {activeSnapshot && (
+            <button
+              type="button"
+              className="button confirm-archive-btn"
+              onClick={() => onArchiveAndLeave(label)}
+            >
+              Archive & Continue
+            </button>
+          )}
+          <div className="confirm-leave-sub-actions">
+            <button type="button" className="button secondary" onClick={onCancel} autoFocus>
+              Stay on {currentLabel}
+            </button>
+            <button type="button" className="button danger-button confirm-danger-btn" onClick={onConfirmLeave}>
+              Discard & Leave
+            </button>
+          </div>
         </div>
       </div>
     </div>
