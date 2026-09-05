@@ -1978,6 +1978,20 @@ td:last-child,th:last-child { border-right:0 }
   border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
 }
 
+.google-word-brand {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  display: inline-flex;
+  align-items: baseline;
+}
+
+.google-char-g1 { color: #4285F4; }
+.google-char-o1 { color: #EA4335; }
+.google-char-o2 { color: #FBBC05; }
+.google-char-g2 { color: #4285F4; }
+.google-char-l  { color: #34A853; }
+.google-char-e  { color: #EA4335; }
+
 .auth-divider {
   display: flex;
   align-items: center;

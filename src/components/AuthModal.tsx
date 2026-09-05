@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { X } from 'lucide-react'
 import { getSupabaseConfig, saveSupabaseConfig, getSupabaseClient } from '../lib/supabase'
 import { loginWithEmail, loginWithGoogle, registerWithEmail, sendPasswordReset } from '../lib/auth'
+import { GoogleWord } from './Common'
 import type { UserProfile } from '../types/auth'
 
 type AuthTab = 'login' | 'register' | 'forgot' | 'setup'
@@ -202,7 +203,7 @@ export function AuthModal({
                 disabled={googleLoading || loading}
                 onClick={handleGoogleAuth}
               >
-                {googleLoading ? 'Connecting to Google...' : 'Continue with Google'}
+                {googleLoading ? 'Connecting to Google...' : <>Continue with <GoogleWord /></>}
               </button>
 
               <div className="auth-divider">
@@ -268,7 +269,7 @@ export function AuthModal({
                 disabled={googleLoading || loading}
                 onClick={handleGoogleAuth}
               >
-                {googleLoading ? 'Connecting to Google...' : 'Register with Google'}
+                {googleLoading ? 'Connecting to Google...' : <>Register with <GoogleWord /></>}
               </button>
 
               <div className="auth-divider">
