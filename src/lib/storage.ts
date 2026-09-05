@@ -73,7 +73,7 @@ export const storage = {
     return formatted
   },
   clearDraft: (tool: string) => remove(`draft:${tool}`),
-  settings: () => get('settings', { theme: 'system', rememberRecent: true, defaultExport: 'PDF' }),
+  settings: () => get('settings', { theme: 'system', accent: 'emerald', rememberRecent: true, defaultExport: 'PDF' }),
   saveSettings: (value: Record<string, unknown>) => set('settings', value),
   clearAllData: () => {
     try {

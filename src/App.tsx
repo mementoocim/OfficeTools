@@ -67,6 +67,7 @@ export default function App() {
   const [templates, setTemplates] = useState<SavedTemplate[]>(storage.templates())
   const [archives, setArchives] = useState<ArchivedItem[]>(storage.archives())
   const [theme, setTheme] = useState<string>(String(storage.settings().theme || 'system'))
+  const [accent, setAccent] = useState<string>(String(storage.settings().accent || 'emerald'))
   const [notice, setNotice] = useState('')
   const [importStatus, setImportStatus] = useState<ImportStatus | null>(null)
 
@@ -298,7 +299,11 @@ export default function App() {
   }, [confirmLeaveOpen])
 
   const notify = (message: string) => { setNotice(message); window.setTimeout(() => setNotice(''), 2800) }
-  useEffect(() => { document.documentElement.dataset.theme = theme; storage.saveSettings({ ...storage.settings(), theme }) }, [theme])
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    document.documentElement.dataset.accent = accent
+    storage.saveSettings({ ...storage.settings(), theme, accent })
+  }, [theme, accent])
   useEffect(() => { const keydown = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setCommandOpen(true) } }; addEventListener('keydown', keydown); return () => removeEventListener('keydown', keydown) }, [])
   const addRecent = (file: RecentFile) => { storage.saveRecent(file); setRecent(storage.recent()) }
   const saveTemplate = (template: SavedTemplate) => { storage.saveTemplate(template); setTemplates(storage.templates()); notify('Template saved locally') }
@@ -371,6 +376,8 @@ export default function App() {
         <Settings
           theme={theme}
           setTheme={setTheme}
+          accent={accent}
+          setAccent={setAccent}
           clearRecent={() => { if (confirm('Clear all recent file history?')) { storage.clearRecent(); setRecent([]) } }}
           templates={templates}
           clearTemplates={() => { if (confirm('Delete all saved templates?')) { templates.forEach(t => storage.deleteTemplate(t.id)); setTemplates([]) } }}
@@ -2731,6 +2738,8 @@ function RecentTable({ recent }: { recent: RecentFile[] }) { return <div classNa
 function Settings({
   theme,
   setTheme,
+  accent,
+  setAccent,
   clearRecent,
   templates,
   clearTemplates,
@@ -2744,6 +2753,8 @@ function Settings({
 }: {
   theme: string
   setTheme: (v: string) => void
+  accent: string
+  setAccent: (v: string) => void
   clearRecent: () => void
   templates: SavedTemplate[]
   clearTemplates: () => void
@@ -2803,14 +2814,44 @@ function Settings({
       </section>
 
       <section>
-        <h2>Appearance</h2>
-        <p>Theme</p>
+        <h2>Appearance & Theme</h2>
+        <p>Interface Display Mode</p>
         <div className="segmented">
           {['light', 'dark', 'system'].map(x => (
             <button key={x} className={theme === x ? 'selected' : ''} onClick={() => setTheme(x)}>
               {x[0].toUpperCase() + x.slice(1)}
             </button>
           ))}
+        </div>
+
+        <div style={{ marginTop: '22px' }}>
+          <p style={{ marginBottom: '4px', fontWeight: 600 }}>Color Palette / Accent Theme</p>
+          <small style={{ color: 'var(--muted)', fontSize: '11.5px', display: 'block' }}>
+            Choose an accent tone for active tools, buttons, badges, and focus rings.
+          </small>
+
+          <div className="accent-picker-grid">
+            {[
+              { id: 'emerald', label: 'Emerald Teal', desc: 'Modern & Crisp Productivity', color: '#0f766e' },
+              { id: 'indigo', label: 'Royal Indigo', desc: 'Executive SaaS & Clean Slate', color: '#4338ca' },
+              { id: 'forest', label: 'Forest Pine', desc: 'Calming Evergreen & Editorial', color: '#1b4332' },
+              { id: 'amber', label: 'Warm Amber', desc: 'Classic Bronze & Archival Paper', color: '#b45309' },
+              { id: 'slate', label: 'Minimal Slate', desc: 'Monochrome Neutral Focus', color: '#334155' }
+            ].map(item => (
+              <button
+                type="button"
+                key={item.id}
+                className={`accent-card ${accent === item.id ? 'active' : ''}`}
+                onClick={() => setAccent(item.id)}
+              >
+                <span className="accent-swatch" style={{ background: item.color }} />
+                <div className="accent-card-info">
+                  <strong>{item.label}</strong>
+                  <small>{item.desc}</small>
+                </div>
+              </button>
+            ))}
+          </div>
         </div>
       </section>
       <section>
