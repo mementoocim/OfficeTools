@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, ArrowDown, ArrowUp, ArrowUpDown, BookOpenText, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, FileDown, FileSpreadsheet, FileText, Keyboard, LayoutTemplate, Loader2, Medal, MoreHorizontal, Plus, Printer, RotateCcw, Save, Sparkles, Trash2, Upload, WandSparkles, X } from 'lucide-react'
+import { AlertCircle, AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, BookOpenText, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, FileDown, FileSpreadsheet, FileText, Keyboard, LayoutTemplate, Loader2, Medal, MoreHorizontal, Plus, Printer, RotateCcw, Save, Sparkles, Trash2, Upload, WandSparkles, X } from 'lucide-react'
 import { AppSidebar } from './components/AppSidebar'
 import { Certificates } from './components/Certificates'
 import { EmptyState, LocalBadge, Modal, PageTitle, SearchField, ToolCard } from './components/Common'
@@ -33,6 +33,11 @@ export default function App() {
   const [notice, setNotice] = useState('')
   const [importStatus, setImportStatus] = useState<ImportStatus | null>(null)
 
+  // Unsaved / active work state tracking
+  const [dirty, setDirty] = useState(false)
+  const [pendingPage, setPendingPage] = useState<Page | null>(null)
+  const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false)
+
   const handleImportStatus = (status: ImportStatus | null) => {
     setImportStatus(status)
     if (status && status.status !== 'loading') {
@@ -42,23 +47,72 @@ export default function App() {
     }
   }
 
-  const setPage = (next: Page) => {
+  const forceNavigate = (next: Page) => {
+    setDirty(false)
     setPageState(next)
     window.location.hash = next
     localStorage.setItem('office_toolkit_page', next)
+    setConfirmLeaveOpen(false)
+    setPendingPage(null)
   }
 
+  const setPage = (next: Page) => {
+    if (next === page) return
+    if (dirty) {
+      setPendingPage(next)
+      setConfirmLeaveOpen(true)
+    } else {
+      forceNavigate(next)
+    }
+  }
+
+  const cancelLeave = () => {
+    setConfirmLeaveOpen(false)
+    setPendingPage(null)
+    if (window.location.hash.replace(/^#\/?/, '') !== page) {
+      window.location.hash = page
+    }
+  }
+
+  const confirmLeave = () => {
+    if (pendingPage) {
+      forceNavigate(pendingPage)
+    } else {
+      setConfirmLeaveOpen(false)
+    }
+  }
+
+  // Intercept closing tab (X), reload (F5 / Ctrl+R), or navigating out of site
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (dirty) {
+        e.preventDefault()
+        e.returnValue = ''
+        return ''
+      }
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [dirty])
+
+  // Intercept browser back/forward buttons when active work is dirty
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash.replace(/^#\/?/, '') as Page
-      if (validPages.includes(hash)) {
-        setPageState(hash)
-        localStorage.setItem('office_toolkit_page', hash)
+      if (validPages.includes(hash) && hash !== page) {
+        if (dirty) {
+          window.location.hash = page
+          setPendingPage(hash)
+          setConfirmLeaveOpen(true)
+        } else {
+          setPageState(hash)
+          localStorage.setItem('office_toolkit_page', hash)
+        }
       }
     }
     window.addEventListener('hashchange', handleHashChange)
     return () => window.removeEventListener('hashchange', handleHashChange)
-  }, [])
+  }, [page, dirty])
 
   useEffect(() => {
     if (!window.location.hash || window.location.hash.replace(/^#\/?/, '') !== page) {
@@ -66,6 +120,16 @@ export default function App() {
     }
     localStorage.setItem('office_toolkit_page', page)
   }, [page])
+
+  // Escape key handler for confirmation modal
+  useEffect(() => {
+    if (!confirmLeaveOpen) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') cancelLeave()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [confirmLeaveOpen])
 
   const notify = (message: string) => { setNotice(message); window.setTimeout(() => setNotice(''), 2800) }
   useEffect(() => { document.documentElement.dataset.theme = theme; storage.saveSettings({ ...storage.settings(), theme }) }, [theme])
@@ -77,10 +141,10 @@ export default function App() {
     <AppSidebar page={page} setPage={setPage} collapsed={collapsed} toggle={() => setCollapsed(!collapsed)} />
     <main className="main-content">
       {page === 'home' && <Home setPage={setPage} recent={recent} setRecent={setRecent} />}
-      {page === 'documents' && <Documents templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} notify={notify} />}
-      {page === 'spreadsheets' && <Spreadsheets addRecent={addRecent} notify={notify} onImportStatus={handleImportStatus} />}
-      {page === 'reports' && <Reports templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} notify={notify} />}
-      {page === 'certificates' && <Certificates templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} notify={notify} onImportStatus={handleImportStatus} />}
+      {page === 'documents' && <Documents templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} notify={notify} onDirtyChange={setDirty} />}
+      {page === 'spreadsheets' && <Spreadsheets addRecent={addRecent} notify={notify} onImportStatus={handleImportStatus} onDirtyChange={setDirty} />}
+      {page === 'reports' && <Reports templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} notify={notify} onDirtyChange={setDirty} />}
+      {page === 'certificates' && <Certificates templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} notify={notify} onImportStatus={handleImportStatus} onDirtyChange={setDirty} />}
       {page === 'templates' && <Templates templates={templates} useTemplate={(t) => { setPage(t.category === 'Document' ? 'documents' : t.category === 'Report' ? 'reports' : 'certificates'); notify(`Open ${t.category} and choose ${t.name} from templates`) }} remove={removeTemplate} />}
       {page === 'recent' && <RecentFiles recent={recent} setRecent={setRecent} />}
       {page === 'settings' && <Settings theme={theme} setTheme={setTheme} clearRecent={() => { if (confirm('Clear all recent file history?')) { storage.clearRecent(); setRecent([]) } }} templates={templates} clearTemplates={() => { if (confirm('Delete all saved templates?')) { templates.forEach(t => storage.deleteTemplate(t.id)); setTemplates([]) } }} />}
@@ -117,6 +181,14 @@ export default function App() {
         </button>
       </aside>
     )}
+    {confirmLeaveOpen && (
+      <ConfirmLeaveModal
+        currentPage={page}
+        targetPage={pendingPage}
+        onConfirm={confirmLeave}
+        onCancel={cancelLeave}
+      />
+    )}
     {commandOpen && <CommandPalette close={() => setCommandOpen(false)} open={(p) => { setPage(p); setCommandOpen(false) }} />}
   </div>
 }
@@ -131,10 +203,30 @@ function Home({ setPage, recent, setRecent }: { setPage: (page: Page) => void; r
   </div></section><section className="recent-section"><div className="section-heading"><h2>Recent Files</h2>{recent.length > 0 && <button className="text-button" onClick={() => { if (confirm('Clear recent history?')) { storage.clearRecent(); setRecent([]) } }}>Clear history</button>}</div>{recent.length ? <RecentTable recent={recent.slice(0, 5)} /> : <EmptyState title="No recent files yet" text="Files and projects you work with will appear here." />}</section></div>
 }
 
-function Documents({ templates, saveTemplate, addRecent, notify }: { templates: SavedTemplate[]; saveTemplate: (x: SavedTemplate) => void; addRecent: (x: RecentFile) => void; notify: (s: string) => void }) {
+function Documents({ templates, saveTemplate, addRecent, notify, onDirtyChange }: {
+  templates: SavedTemplate[]
+  saveTemplate: (x: SavedTemplate) => void
+  addRecent: (x: RecentFile) => void
+  notify: (s: string) => void
+  onDirtyChange?: (dirty: boolean) => void
+}) {
   const [doc, setDoc] = useState<DocumentData>(initialDocument), [zoom, setZoom] = useState(0.75), [templateOpen, setTemplateOpen] = useState(false)
   const update = (field: keyof DocumentData, value: string) => setDoc({ ...doc, [field]: value })
   const title = doc.subject || `${doc.type} document`; const lines = documentLines(doc)
+
+  useEffect(() => {
+    const isModified = Boolean(
+      doc.recipientName.trim() ||
+      doc.recipientPosition.trim() ||
+      doc.organization.trim() ||
+      doc.address.trim() ||
+      doc.subject.trim() ||
+      doc.senderPosition.trim() ||
+      doc.body.trim() !== initialDocument.body.trim()
+    )
+    onDirtyChange?.(isModified)
+  }, [doc, onDirtyChange])
+
   const loadTemplate = (template: SavedTemplate) => { setDoc(template.payload as DocumentData); setTemplateOpen(false); notify('Template loaded') }
   const save = () => { const name = prompt('Template name', doc.subject || 'Untitled Letter'); if (name) saveTemplate({ id: id(), name, category: 'Document', updatedAt: new Date().toLocaleString(), payload: doc }) }
   const record = () => addRecent({ id: id(), name: title, type: 'Document', modified: 'Just now' })
@@ -144,10 +236,11 @@ function Documents({ templates, saveTemplate, addRecent, notify }: { templates: 
 function documentLines(doc: DocumentData) { return [doc.date, '', doc.recipientName, doc.recipientPosition, doc.organization, doc.address, '', doc.subject ? `Subject: ${doc.subject}` : '', '', doc.greeting, '', ...doc.body.split('\n'), '', doc.closing, '', doc.senderName, doc.senderPosition].filter((x, i, arr) => x || (i > 0 && arr[i - 1] !== '')) }
 function Paper({ zoom, lines, certificate = false }: { zoom: number; lines: string[]; certificate?: boolean }) { return <div className={`paper-wrap ${certificate ? 'certificate-paper' : ''}`}><article className="paper" style={{ transform: `scale(${zoom})`, transformOrigin: 'top center', marginBottom: `${(zoom - 1) * 1080}px` }}>{certificate ? <div className="certificate-inner">{lines.map((line, i) => <p key={i} className={i === 0 ? 'certificate-title' : ''}>{line || ' '}</p>)}</div> : lines.map((line, i) => <p key={i} className={line.startsWith('Subject:') ? 'subject-line' : ''}>{line || ' '}</p>)}</article></div> }
 
-function Spreadsheets({ addRecent, notify, onImportStatus }: {
+function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange }: {
   addRecent: (x: RecentFile) => void
   notify: (s: string) => void
   onImportStatus?: (status: ImportStatus | null) => void
+  onDirtyChange?: (dirty: boolean) => void
 }) {
   const [data, setData] = useState<SpreadsheetData | null>(null)
   const [error, setError] = useState('')
@@ -157,6 +250,10 @@ function Spreadsheets({ addRecent, notify, onImportStatus }: {
   const [sortCol, setSortCol] = useState<number | null>(null)
   const [sortAsc, setSortAsc] = useState<boolean>(true)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    onDirtyChange?.(Boolean(data && data.rows.length > 0))
+  }, [data, onDirtyChange])
 
   const importFile = async (file?: File) => {
     if (!file) return
@@ -470,16 +567,31 @@ function Spreadsheets({ addRecent, notify, onImportStatus }: {
   )
 }
 
-function Reports({ templates, saveTemplate, addRecent, notify }: { templates: SavedTemplate[]; saveTemplate: (x: SavedTemplate) => void; addRecent: (x: RecentFile) => void; notify: (s: string) => void }) {
+function Reports({ templates, saveTemplate, addRecent, notify, onDirtyChange }: {
+  templates: SavedTemplate[]
+  saveTemplate: (x: SavedTemplate) => void
+  addRecent: (x: RecentFile) => void
+  notify: (s: string) => void
+  onDirtyChange?: (dirty: boolean) => void
+}) {
   const [title, setTitle] = useState('Monthly Activity Report'), [period, setPeriod] = useState(''), [prepared, setPrepared] = useState('Mico'), [office, setOffice] = useState(''), [sections, setSections] = useState(defaultSections), [templatesOpen, setTemplatesOpen] = useState(false)
   const lines = [period && `Reporting period: ${period}`, prepared && `Prepared by: ${prepared}`, office && `Office / Unit: ${office}`, '', ...sections.flatMap(s => [s.title, ...s.content.split('\n'), ''])].filter(Boolean) as string[]
+
+  useEffect(() => {
+    const isModified = Boolean(
+      period.trim() ||
+      office.trim() ||
+      title !== 'Monthly Activity Report' ||
+      sections.some(s => s.content.trim() !== '')
+    )
+    onDirtyChange?.(isModified)
+  }, [title, period, office, sections, onDirtyChange])
+
   const changeSection = (index: number, patch: Partial<ReportSection>) => setSections(sections.map((s, i) => i === index ? { ...s, ...patch } : s))
   const use = (template: SavedTemplate) => { const p = template.payload as { title: string; period: string; prepared: string; office: string; sections: ReportSection[] }; setTitle(p.title); setPeriod(p.period); setPrepared(p.prepared); setOffice(p.office); setSections(p.sections); setTemplatesOpen(false); notify('Report template loaded') }
   const save = () => { const name = prompt('Template name', title); if (name) saveTemplate({ id: id(), name, category: 'Report', updatedAt: new Date().toLocaleString(), payload: { title, period, prepared, office, sections } }) }
   return <div className="page workspace"><PageTitle title="Report Builder" subtitle="Build recurring reports with reusable sections."><div className="header-actions"><button className="button secondary" onClick={() => setTemplatesOpen(true)}><Copy size={16}/> Use previous</button><button className="button" onClick={save}><Save size={16}/> Save template</button></div></PageTitle><div className="editor-layout"><section className="field-panel report-fields"><label>Report title<input value={title} onChange={e => setTitle(e.target.value)}/></label><label>Reporting period<input value={period} onChange={e => setPeriod(e.target.value)} placeholder="August 2026"/></label><label>Prepared by<input value={prepared} onChange={e => setPrepared(e.target.value)}/></label><label>Office / Unit<input value={office} onChange={e => setOffice(e.target.value)}/></label><div className="section-editor-head"><b>Sections</b><button className="icon-button" title="Add section" onClick={() => setSections([...sections, { id: id(), title: 'New Section', content: '', type: 'Text' }])}><Plus size={17}/></button></div>{sections.map((s, i) => <div className="section-form" key={s.id}><div><input value={s.title} onChange={e => changeSection(i, { title: e.target.value })}/><button title="Delete section" onClick={() => setSections(sections.filter(x => x.id !== s.id))}><Trash2 size={14}/></button></div><textarea rows={4} value={s.content} onChange={e => changeSection(i, { content: e.target.value })} placeholder={`Write ${s.title.toLowerCase()}...`}/></div>)}</section><section className="preview-area"><div className="preview-toolbar"><span>Live A4 preview</span><span className="toolbar-spacer"/><button className="icon-button" title="Print" onClick={() => print()}><Printer size={17}/></button><button className="button secondary" onClick={() => { exportDocx(title, lines); addRecent({ id: id(), name: title, type: 'Report', modified: 'Just now' }) }}>DOCX</button><button className="button" onClick={() => { exportPdf(title, lines); addRecent({ id: id(), name: title, type: 'Report', modified: 'Just now' }) }}>PDF</button></div><Paper zoom={.75} lines={[title, '', ...lines]}/></section></div>{templatesOpen && <TemplateModal templates={templates.filter(t => t.category === 'Report')} load={use} close={() => setTemplatesOpen(false)} />}</div>
 }
-
-
 
 function Templates({ templates, useTemplate, remove }: { templates: SavedTemplate[]; useTemplate: (t: SavedTemplate) => void; remove: (id: string) => void }) { const [search, setSearch] = useState(''); const results = templates.filter(t => t.name.toLowerCase().includes(search.toLowerCase())); return <div className="page"><PageTitle title="Templates" subtitle="Your reusable documents, reports and certificates."/><SearchField value={search} onChange={setSearch} placeholder="Search templates"/>{results.length ? <div className="template-list">{results.map(t => <article key={t.id}><span className="template-icon">{t.category === 'Document' ? <FileText/> : t.category === 'Report' ? <BookOpenText/> : <Medal/>}</span><div><h3>{t.name}</h3><p>{t.category} · Updated {t.updatedAt}</p></div><button className="button secondary" onClick={() => useTemplate(t)}>Use</button><button className="icon-button" title="Duplicate" onClick={() => { storage.saveTemplate({ ...t, id: id(), name: `${t.name} copy`, updatedAt: new Date().toLocaleString() }); location.reload() }}><Copy size={16}/></button><button className="icon-button danger" title="Delete" onClick={() => remove(t.id)}><Trash2 size={16}/></button></article>)}</div> : <EmptyState title="No templates yet" text="Save a document, report, or certificate as a reusable template."/>}</div> }
 
@@ -491,3 +603,62 @@ function Settings({ theme, setTheme, clearRecent, templates, clearTemplates }: {
 function TemplateModal({ templates, load, close }: { templates: SavedTemplate[]; load: (t: SavedTemplate) => void; close: () => void }) { return <Modal title="Choose a template" close={close}>{templates.length ? <div className="template-picker">{templates.map(t => <button key={t.id} onClick={() => load(t)}><LayoutTemplate size={18}/><span><strong>{t.name}</strong><small>Updated {t.updatedAt}</small></span><ChevronRight size={17}/></button>)}</div> : <EmptyState title="No saved templates" text="Save your current work as a template to use it again."/>}</Modal> }
 
 function CommandPalette({ close, open }: { close: () => void; open: (page: Page) => void }) { const [query, setQuery] = useState(''); const actions: { name: string; page: Page; icon: typeof FileText }[] = [{ name: 'New Document', page: 'documents', icon: FileText }, { name: 'Import Spreadsheet', page: 'spreadsheets', icon: FileSpreadsheet }, { name: 'New Report', page: 'reports', icon: BookOpenText }, { name: 'Generate Certificates', page: 'certificates', icon: Medal }, { name: 'Open Templates', page: 'templates', icon: LayoutTemplate }, { name: 'Open Recent Files', page: 'recent', icon: FileText }, { name: 'Settings', page: 'settings', icon: FileText }]; const filtered = actions.filter(a => a.name.toLowerCase().includes(query.toLowerCase())); return <Modal title="Command menu" close={close}><SearchField value={query} onChange={setQuery} placeholder="Search commands..."/><div className="command-list">{filtered.map(a => <button key={a.name} onClick={() => open(a.page)}><a.icon size={17}/>{a.name}<ChevronRight size={16}/></button>)}</div></Modal> }
+
+function ConfirmLeaveModal({
+  currentPage,
+  targetPage,
+  onConfirm,
+  onCancel
+}: {
+  currentPage: Page
+  targetPage: Page | null
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  const pageTitles: Record<Page, string> = {
+    home: 'Home',
+    documents: 'Document Generator',
+    spreadsheets: 'Spreadsheet Tools',
+    reports: 'Report Builder',
+    certificates: 'Certificate Generator',
+    templates: 'Templates',
+    recent: 'Recent Files',
+    settings: 'Settings'
+  }
+
+  const currentLabel = pageTitles[currentPage] || currentPage
+  const targetLabel = targetPage ? (pageTitles[targetPage] || targetPage) : 'another page'
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onCancel}>
+      <div
+        className="modal confirm-leave-modal"
+        onMouseDown={e => e.stopPropagation()}
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="confirm-modal-title"
+        aria-describedby="confirm-modal-desc"
+      >
+        <div className="confirm-leave-body">
+          <div className="confirm-leave-icon">
+            <AlertTriangle size={24} />
+          </div>
+          <div className="confirm-leave-text">
+            <h2 id="confirm-modal-title">Leave with unsaved work?</h2>
+            <p id="confirm-modal-desc">
+              You have active work or imported data in <strong>{currentLabel}</strong>. Leaving to go to <strong>{targetLabel}</strong> will reset your current progress.
+            </p>
+          </div>
+        </div>
+        <div className="confirm-leave-actions">
+          <button type="button" className="button secondary" onClick={onCancel} autoFocus>
+            Stay on {currentLabel}
+          </button>
+          <button type="button" className="button danger-button confirm-danger-btn" onClick={onConfirm}>
+            Leave and discard
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}

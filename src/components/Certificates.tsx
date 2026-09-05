@@ -36,6 +36,7 @@ interface CertificatesProps {
   addRecent: (f: RecentFile) => void
   notify: (msg: string) => void
   onImportStatus?: (status: ImportStatus | null) => void
+  onDirtyChange?: (dirty: boolean) => void
 }
 
 const id = () => crypto.randomUUID()
@@ -56,7 +57,7 @@ export const initialCertificate: CertificateData = {
   qrPrefix: 'CERT'
 }
 
-export function Certificates({ templates, saveTemplate, addRecent, notify, onImportStatus }: CertificatesProps) {
+export function Certificates({ templates, saveTemplate, addRecent, notify, onImportStatus, onDirtyChange }: CertificatesProps) {
   const [participants, setParticipants] = useState<string[][]>([])
   const [headers, setHeaders] = useState<string[]>([])
   const [fileName, setFileName] = useState('')
@@ -110,6 +111,21 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
       active = false
     }
   }, [cert.includeQr, cert.title, cert.date, resolvedCurrent.name, resolvedCurrent.id, resolvedCurrent.date])
+
+  useEffect(() => {
+    const isModified = Boolean(
+      participants.length > 0 ||
+      step > 1 ||
+      isGenerating ||
+      cert.title !== initialCertificate.title ||
+      cert.event !== initialCertificate.event ||
+      cert.venue !== initialCertificate.venue ||
+      cert.signatory !== initialCertificate.signatory ||
+      cert.backgroundImageUrl ||
+      cert.logoUrl
+    )
+    onDirtyChange?.(isModified)
+  }, [participants.length, step, isGenerating, cert, onDirtyChange])
 
   const importList = async (file?: File) => {
     if (!file) return
