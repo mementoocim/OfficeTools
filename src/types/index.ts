@@ -31,6 +31,8 @@ export type SpreadsheetData = {
   headers: string[]
   rows: string[][]
   sheets: string[]
+  activeSheet?: string
+  workbook?: Record<string, { headers: string[]; rows: string[][] }>
   addedColumns?: string[]
 }
 

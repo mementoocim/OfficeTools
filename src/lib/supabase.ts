@@ -110,11 +110,13 @@ create policy "profiles_insert_policy"
   to authenticated
   with check (auth.uid() = id or public.is_admin());
 
+-- Profile roles and statuses must be changed only by an administrator.
+-- Allowing users to update their own row here would let them promote themselves.
 create policy "profiles_update_policy"
   on public.profiles for update
   to authenticated
-  using (auth.uid() = id or public.is_admin())
-  with check (auth.uid() = id or public.is_admin());
+  using (public.is_admin())
+  with check (public.is_admin());
 
 create policy "profiles_delete_policy"
   on public.profiles for delete
@@ -154,15 +156,15 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
 
--- 7. Sync existing auth users into public.profiles as admin
+-- 7. Backfill existing auth users. Only the earliest account becomes admin;
+-- every other account starts as staff. Existing profile roles are preserved.
 insert into public.profiles (id, email, full_name, role, status)
-select 
-  id, 
-  email, 
-  coalesce(raw_user_meta_data->>'full_name', split_part(email, '@', 1)), 
-  'admin', 
+select
+  id,
+  email,
+  coalesce(raw_user_meta_data->>'full_name', split_part(email, '@', 1)),
+  case when row_number() over (order by created_at asc) = 1 then 'admin' else 'staff' end,
   'active'
 from auth.users
-on conflict (id) do update 
-set role = 'admin', status = 'active';
+on conflict (id) do nothing;
 `

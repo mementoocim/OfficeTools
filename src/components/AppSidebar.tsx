@@ -3,7 +3,7 @@ import type { Page } from '../types'
 import type { UserProfile } from '../types/auth'
 
 const items: { id: Page; label: string; icon: typeof Home; group?: string }[] = [
-  { id: 'home', label: 'Home', icon: Home },
+  { id: 'home', label: 'Home', icon: Home, group: 'WORKSPACE' },
   { id: 'documents', label: 'Documents', icon: FileText, group: 'TOOLS' },
   { id: 'spreadsheets', label: 'Spreadsheets', icon: FileSpreadsheet },
   { id: 'reports', label: 'Reports', icon: BookOpenText },
@@ -36,7 +36,7 @@ export function AppSidebar({
     <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
       <div className="brand">
         <span className="brand-mark"><TableProperties size={19} /></span>
-        {!collapsed && <span>Office Toolkit</span>}
+        {!collapsed && <span className="brand-copy"><strong>Office Toolkit</strong><small>Productivity workspace</small></span>}
         <button title="Collapse sidebar" className="icon-button collapse" onClick={toggle}>
           <ChevronLeft size={17} />
         </button>
@@ -73,6 +73,7 @@ export function AppSidebar({
       </nav>
 
       <div className="side-bottom">
+        {!collapsed && <div className="nav-label footer-label">ACCOUNT</div>}
         <button
           title={collapsed ? 'Settings' : undefined}
           className={`nav-item ${page === 'settings' ? 'active' : ''}`}
@@ -143,4 +144,3 @@ export function AppSidebar({
     </aside>
   )
 }
-

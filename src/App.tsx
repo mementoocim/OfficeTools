@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, AlertTriangle, Archive, ArrowDown, ArrowUp, ArrowUpDown, BookOpenText, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, FileDown, FileSpreadsheet, FileText, Keyboard, LayoutTemplate, Loader2, Medal, MoreHorizontal, Plus, Printer, RotateCcw, Save, ShieldCheck, Sparkles, Trash2, Upload, WandSparkles, X } from 'lucide-react'
 import { AppSidebar } from './components/AppSidebar'
-import { Certificates } from './components/Certificates'
 import { AutoSaveStatus, CrashRecoveryBanner, EmptyState, LocalBadge, Modal, PageTitle, SearchField, ToolCard } from './components/Common'
 import type { ArchivedItem, CertificateData, DocumentData, ImportStatus, Page, RecentFile, ReportSection, SavedTemplate, SpreadsheetData } from './types'
 import { storage, type StoredDraft } from './lib/storage'
@@ -30,6 +29,8 @@ import { AdminPanel } from './components/AdminPanel'
 import { getSupabaseClient, getSupabaseConfig } from './lib/supabase'
 import { fetchUserProfile, logoutUser } from './lib/auth'
 import type { UserProfile } from './types/auth'
+
+const Certificates = lazy(() => import('./components/Certificates').then(module => ({ default: module.Certificates })))
 
 const id = () => crypto.randomUUID()
 const initialDocument: DocumentData = { type: 'Letter', date: new Date().toLocaleDateString('en-CA'), recipientName: '', recipientPosition: '', organization: '', address: '', subject: '', greeting: 'Dear Sir/Madam,', body: 'I am writing to respectfully submit this letter for your consideration.', closing: 'Respectfully yours,', senderName: 'Mico', senderPosition: '' }
@@ -66,8 +67,11 @@ export default function App() {
   const [recent, setRecent] = useState<RecentFile[]>(storage.recent())
   const [templates, setTemplates] = useState<SavedTemplate[]>(storage.templates())
   const [archives, setArchives] = useState<ArchivedItem[]>(storage.archives())
+  const [templateToOpen, setTemplateToOpen] = useState<SavedTemplate | null>(null)
   const [theme, setTheme] = useState<string>(String(storage.settings().theme || 'system'))
   const [accent, setAccent] = useState<string>(String(storage.settings().accent || 'emerald'))
+  const [rememberRecent, setRememberRecent] = useState(Boolean(storage.settings().rememberRecent ?? true))
+  const [defaultExport, setDefaultExport] = useState<string>(String(storage.settings().defaultExport || 'PDF'))
   const [notice, setNotice] = useState('')
   const [importStatus, setImportStatus] = useState<ImportStatus | null>(null)
 
@@ -302,10 +306,14 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     document.documentElement.dataset.accent = accent
-    storage.saveSettings({ ...storage.settings(), theme, accent })
-  }, [theme, accent])
+    storage.saveSettings({ ...storage.settings(), theme, accent, rememberRecent, defaultExport })
+  }, [theme, accent, rememberRecent, defaultExport])
   useEffect(() => { const keydown = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setCommandOpen(true) } }; addEventListener('keydown', keydown); return () => removeEventListener('keydown', keydown) }, [])
-  const addRecent = (file: RecentFile) => { storage.saveRecent(file); setRecent(storage.recent()) }
+  const addRecent = (file: RecentFile) => {
+    if (!rememberRecent) return
+    storage.saveRecent(file)
+    setRecent(storage.recent())
+  }
   const saveTemplate = (template: SavedTemplate) => { storage.saveTemplate(template); setTemplates(storage.templates()); notify('Template saved locally') }
   const removeTemplate = (templateId: string) => { if (confirm('Delete this template?')) { storage.deleteTemplate(templateId); setTemplates(storage.templates()) } }
 
@@ -364,12 +372,12 @@ export default function App() {
       onSignOut={handleSignOut}
     />
     <main className="main-content">
-      {page === 'home' && <Home setPage={setPage} recent={recent} setRecent={setRecent} />}
-      {page === 'documents' && <Documents templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} notify={notify} onDirtyChange={setDirty} onSnapshotChange={setActiveSnapshot} />}
-      {page === 'spreadsheets' && <Spreadsheets addRecent={addRecent} notify={notify} onImportStatus={handleImportStatus} onDirtyChange={setDirty} onSnapshotChange={setActiveSnapshot} />}
-      {page === 'reports' && <Reports templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} notify={notify} onDirtyChange={setDirty} onSnapshotChange={setActiveSnapshot} />}
-      {page === 'certificates' && <Certificates templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} notify={notify} onImportStatus={handleImportStatus} onDirtyChange={setDirty} onSnapshotChange={setActiveSnapshot} />}
-      {page === 'templates' && <Templates templates={templates} useTemplate={(t) => { setPage(t.category === 'Document' ? 'documents' : t.category === 'Report' ? 'reports' : 'certificates'); notify(`Open ${t.category} and choose ${t.name} from templates`) }} remove={removeTemplate} />}
+      {page === 'home' && <Home setPage={setPage} recent={recent} setRecent={setRecent} currentUser={currentUser} />}
+      {page === 'documents' && <Documents templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} defaultExport={defaultExport} pendingTemplate={templateToOpen?.category === 'Document' ? templateToOpen : null} onTemplateApplied={() => setTemplateToOpen(null)} notify={notify} onDirtyChange={setDirty} onSnapshotChange={setActiveSnapshot} />}
+      {page === 'spreadsheets' && <Spreadsheets addRecent={addRecent} defaultExport={defaultExport} notify={notify} onImportStatus={handleImportStatus} onDirtyChange={setDirty} onSnapshotChange={setActiveSnapshot} />}
+      {page === 'reports' && <Reports templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} defaultExport={defaultExport} pendingTemplate={templateToOpen?.category === 'Report' ? templateToOpen : null} onTemplateApplied={() => setTemplateToOpen(null)} notify={notify} onDirtyChange={setDirty} onSnapshotChange={setActiveSnapshot} />}
+      {page === 'certificates' && <Suspense fallback={<div className="page workspace"><div className="workspace-loading">Loading certificate workspace…</div></div>}><Certificates templates={templates} saveTemplate={saveTemplate} addRecent={addRecent} pendingTemplate={templateToOpen?.category === 'Certificate' ? templateToOpen : null} onTemplateApplied={() => setTemplateToOpen(null)} notify={notify} onImportStatus={handleImportStatus} onDirtyChange={setDirty} onSnapshotChange={setActiveSnapshot} /></Suspense>}
+      {page === 'templates' && <Templates templates={templates} useTemplate={(t) => { setTemplateToOpen(t); setPage(t.category === 'Document' ? 'documents' : t.category === 'Report' ? 'reports' : 'certificates') }} remove={removeTemplate} />}
       {page === 'archives' && <Archives archives={archives} restore={restoreArchive} remove={deleteArchive} clearAll={clearAllArchives} />}
       {page === 'recent' && <RecentFiles recent={recent} setRecent={setRecent} />}
       {page === 'settings' && (
@@ -378,6 +386,10 @@ export default function App() {
           setTheme={setTheme}
           accent={accent}
           setAccent={setAccent}
+          rememberRecent={rememberRecent}
+          setRememberRecent={setRememberRecent}
+          defaultExport={defaultExport}
+          setDefaultExport={setDefaultExport}
           clearRecent={() => { if (confirm('Clear all recent file history?')) { storage.clearRecent(); setRecent([]) } }}
           templates={templates}
           clearTemplates={() => { if (confirm('Delete all saved templates?')) { templates.forEach(t => storage.deleteTemplate(t.id)); setTemplates([]) } }}
@@ -402,9 +414,13 @@ export default function App() {
           }}
         />
       )}
-      {page === 'admin' && <AdminPanel currentUser={currentUser} onNotify={notify} />}
+      {page === 'admin' && (
+        currentUser.role === 'admin'
+          ? <AdminPanel currentUser={currentUser} onNotify={notify} />
+          : <div className="page"><PageTitle title="Admin Console" subtitle="This area is restricted to administrators." /><EmptyState title="Administrator access required" text="Your account does not have permission to manage users or database settings." /></div>
+      )}
     </main>
-    <button className="command-hint" onClick={() => setCommandOpen(true)}><Keyboard size={15}/> Command menu <kbd>Ctrl K</kbd></button>
+    <button className="command-hint" onClick={() => setCommandOpen(true)}>Command menu <kbd>Ctrl K</kbd></button>
     {notice && <div className="toast">{notice}</div>}
     {importStatus && (
       <aside className={`import-toast ${importStatus.status}`} aria-live="polite">
@@ -469,20 +485,26 @@ export default function App() {
   </div>
 }
 
-function Home({ setPage, recent, setRecent }: { setPage: (page: Page) => void; recent: RecentFile[]; setRecent: (f: RecentFile[]) => void }) {
+function Home({ setPage, recent, setRecent, currentUser }: { setPage: (page: Page) => void; recent: RecentFile[]; setRecent: (f: RecentFile[]) => void; currentUser: UserProfile | null }) {
   const hour = new Date().getHours(); const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
-  return <div className="page home"><PageTitle title={`${greeting}, Mico.`} subtitle="What would you like to work on?" /><section><div className="section-heading"><h2>Quick Tools</h2><LocalBadge /></div><div className="tool-grid">
-    <ToolCard icon={<FileText size={21}/>} title="Document Generator" text="Create letters, reports and certificates" action={() => setPage('documents')} />
-    <ToolCard icon={<FileSpreadsheet size={21}/>} title="Spreadsheet Tools" text="Clean • Merge • Filter • Convert" action={() => setPage('spreadsheets')} />
-    <ToolCard icon={<BookOpenText size={21}/>} title="Report Builder" text="Generate recurring reports" action={() => setPage('reports')} />
-    <ToolCard icon={<Medal size={21}/>} title="Bulk Certificate Generator" text="Excel → Certificates → PDF" action={() => setPage('certificates')} />
+  const fullName = currentUser?.full_name?.trim()
+  const givenName = fullName?.includes(',') ? fullName.split(',')[1]?.trim().split(/\s+/)[0] : fullName?.split(/\s+/)[0]
+  const displayName = givenName || currentUser?.email?.split('@')[0] || 'there'
+  return <div className="page home"><PageTitle title={`${greeting}, ${displayName}.`} subtitle="What would you like to work on?" /><section><div className="section-heading"><h2>Quick Tools</h2><LocalBadge /></div><div className="tool-grid">
+    <ToolCard title="Document Generator" text="Create letters, reports and certificates" artwork="/dashboard-assets/document-generator.png" tone="tool-card-document" action={() => setPage('documents')} />
+    <ToolCard title="Spreadsheet Tools" text="Clean • Merge • Filter • Convert" artwork="/dashboard-assets/spreadsheet-tools.png" tone="tool-card-spreadsheet" action={() => setPage('spreadsheets')} />
+    <ToolCard title="Report Builder" text="Generate recurring reports" artwork="/dashboard-assets/report-builder.png" tone="tool-card-report" action={() => setPage('reports')} />
+    <ToolCard title="Bulk Certificate Generator" text="Excel → Certificates → PDF" artwork="/dashboard-assets/certificate-generator.png" tone="tool-card-certificate" action={() => setPage('certificates')} />
   </div></section><section className="recent-section"><div className="section-heading"><h2>Recent Files</h2>{recent.length > 0 && <button className="text-button" onClick={() => { if (confirm('Clear recent history?')) { storage.clearRecent(); setRecent([]) } }}>Clear history</button>}</div>{recent.length ? <RecentTable recent={recent.slice(0, 5)} /> : <EmptyState title="No recent files yet" text="Files and projects you work with will appear here." />}</section></div>
 }
 
-function Documents({ templates, saveTemplate, addRecent, notify, onDirtyChange, onSnapshotChange }: {
+function Documents({ templates, saveTemplate, addRecent, defaultExport, pendingTemplate, onTemplateApplied, notify, onDirtyChange, onSnapshotChange }: {
   templates: SavedTemplate[]
   saveTemplate: (x: SavedTemplate) => void
   addRecent: (x: RecentFile) => void
+  defaultExport: string
+  pendingTemplate: SavedTemplate | null
+  onTemplateApplied: () => void
   notify: (s: string) => void
   onDirtyChange?: (dirty: boolean) => void
   onSnapshotChange?: (snapshot: { label: string; summary: string; tool: 'documents'; payload: unknown } | null) => void
@@ -510,6 +532,15 @@ function Documents({ templates, saveTemplate, addRecent, notify, onDirtyChange, 
   const update = (field: keyof DocumentData, value: string) => setDoc({ ...doc, [field]: value })
   const title = doc.subject || `${doc.type} document`
   const lines = documentLines(doc)
+
+  useEffect(() => {
+    if (!pendingTemplate) return
+    setDoc(pendingTemplate.payload as DocumentData)
+    setRecoveredDraft(null)
+    setLastSaved(null)
+    onTemplateApplied()
+    notify(`Loaded "${pendingTemplate.name}" template`)
+  }, [pendingTemplate?.id])
 
   const handleRestore = () => {
     if (recoveredDraft?.data) {
@@ -593,12 +624,8 @@ function Documents({ templates, saveTemplate, addRecent, notify, onDirtyChange, 
           <button type="button" className="button secondary" onClick={handleNewDocument}>
             New Document
           </button>
-          <button className="button secondary" onClick={() => setTemplateOpen(true)}>
-            <LayoutTemplate size={16} /> Templates
-          </button>
-          <button className="button" onClick={save}>
-            <Save size={16} /> Save template
-          </button>
+          <button className="button secondary" onClick={() => setTemplateOpen(true)}>Templates</button>
+          <button className="button" onClick={save}>Save template</button>
         </div>
       </PageTitle>
 
@@ -627,8 +654,8 @@ function Documents({ templates, saveTemplate, addRecent, notify, onDirtyChange, 
             <span className="toolbar-spacer"/>
             <AutoSaveStatus lastSaved={lastSaved} isDirty={Boolean(lastSaved)} />
             <button className="icon-button" title="Print" onClick={() => print()}><Printer size={17}/></button>
-            <button className="button secondary" onClick={() => { exportDocx(title, lines); record() }}><Download size={16}/> DOCX</button>
-            <button className="button" onClick={() => { exportPdf(title, lines); record() }}><FileDown size={16}/> PDF</button>
+            <button className={defaultExport === 'DOCX' ? 'button' : 'button secondary'} onClick={() => { exportDocx(title, lines); record() }}>DOCX</button>
+            <button className={defaultExport === 'PDF' ? 'button' : 'button secondary'} onClick={() => { exportPdf(title, lines); record() }}>PDF</button>
           </div>
           <Paper zoom={zoom} lines={lines}/>
         </section>
@@ -641,8 +668,9 @@ function Documents({ templates, saveTemplate, addRecent, notify, onDirtyChange, 
 function documentLines(doc: DocumentData) { return [doc.date, '', doc.recipientName, doc.recipientPosition, doc.organization, doc.address, '', doc.subject ? `Subject: ${doc.subject}` : '', '', doc.greeting, '', ...doc.body.split('\n'), '', doc.closing, '', doc.senderName, doc.senderPosition].filter((x, i, arr) => x || (i > 0 && arr[i - 1] !== '')) }
 function Paper({ zoom, lines, certificate = false }: { zoom: number; lines: string[]; certificate?: boolean }) { return <div className={`paper-wrap ${certificate ? 'certificate-paper' : ''}`}><article className="paper" style={{ transform: `scale(${zoom})`, transformOrigin: 'top center', marginBottom: `${(zoom - 1) * 1080}px` }}>{certificate ? <div className="certificate-inner">{lines.map((line, i) => <p key={i} className={i === 0 ? 'certificate-title' : ''}>{line || ' '}</p>)}</div> : lines.map((line, i) => <p key={i} className={line.startsWith('Subject:') ? 'subject-line' : ''}>{line || ' '}</p>)}</article></div> }
 
-function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange, onSnapshotChange }: {
+function Spreadsheets({ addRecent, defaultExport, notify, onImportStatus, onDirtyChange, onSnapshotChange }: {
   addRecent: (x: RecentFile) => void
+  defaultExport: string
   notify: (s: string) => void
   onImportStatus?: (status: ImportStatus | null) => void
   onDirtyChange?: (dirty: boolean) => void
@@ -666,6 +694,32 @@ function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange, onSnap
   const [formatModalOpen, setFormatModalOpen] = useState(false)
   const [showSummary, setShowSummary] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  const syncActiveSheet = (next: SpreadsheetData): SpreadsheetData => {
+    if (!next.workbook || !next.activeSheet) return next
+    return {
+      ...next,
+      workbook: {
+        ...next.workbook,
+        [next.activeSheet]: { headers: next.headers, rows: next.rows }
+      }
+    }
+  }
+
+  const selectSheet = (sheetName: string) => {
+    if (!data?.workbook || sheetName === data.activeSheet) return
+    const current = syncActiveSheet(data)
+    const target = current.workbook?.[sheetName]
+    if (!target) return
+    setData({ ...current, activeSheet: sheetName, headers: target.headers, rows: target.rows, addedColumns: [] })
+    setHistory([])
+    setSelectedCol(-1)
+    setSortCol(null)
+    setSortAsc(true)
+    setSearch('')
+    setShowSummary(false)
+    notify(`Opened sheet "${sheetName}"`)
+  }
 
   const handleRestore = () => {
     if (recoveredDraft?.data) {
@@ -760,7 +814,7 @@ function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange, onSnap
     }
 
     setHistory([...history, data])
-    setData({ ...data, rows })
+    setData(syncActiveSheet({ ...data, rows }))
 
     if (mode === 'duplicates') {
       notify(`Removed ${affectedCount} duplicate row${affectedCount === 1 ? '' : 's'}`)
@@ -877,7 +931,7 @@ function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange, onSnap
           />
           <div className="header-actions">
             <button className="button" onClick={() => fileRef.current?.click()}>
-              <Upload size={16} /> Browse files
+              Browse files
             </button>
             <button type="button" className="button secondary" onClick={loadSampleDataset}>
               Load Sample Dataset
@@ -891,8 +945,16 @@ function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange, onSnap
             <div>
               <h2>{data.name}</h2>
               <p>
-                {data.rows.length.toLocaleString()} rows · {data.headers.length} columns · Sheet: {data.sheets[0]}
+                {data.rows.length.toLocaleString()} rows · {data.headers.length} columns · Sheet: {data.activeSheet || data.sheets[0]}
               </p>
+              {data.sheets.length > 1 && (
+                <label className="sheet-selector">
+                  <span>Worksheet</span>
+                  <select value={data.activeSheet || data.sheets[0]} onChange={e => selectSheet(e.target.value)}>
+                    {data.sheets.map(sheetName => <option key={sheetName} value={sheetName}>{sheetName}</option>)}
+                  </select>
+                </label>
+              )}
             </div>
             <div className="header-actions">
               <AutoSaveStatus lastSaved={lastSaved} isDirty={Boolean(data)} />
@@ -909,11 +971,11 @@ function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange, onSnap
                   fileRef.current?.click()
                 }}
               >
-                <Upload size={16} /> Import another
+                Import another
               </button>
               <div className="export-group">
-                <button className="button" onClick={() => exportSpreadsheet(data, 'xlsx')}>
-                  <Download size={16} /> Export Excel
+                <button className={defaultExport === 'Excel' ? 'button' : 'button secondary'} onClick={() => exportSpreadsheet(data, 'xlsx')}>
+                  Export Excel
                 </button>
                 <button className="button secondary" onClick={() => exportSpreadsheet(data, 'csv')}>
                   CSV
@@ -1058,7 +1120,7 @@ function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange, onSnap
                   notify('Last operation undone')
                 }}
               >
-                <RotateCcw size={13} /> Undo
+                Undo
               </button>
             )}
 
@@ -1186,14 +1248,14 @@ function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange, onSnap
                 const updatedAdded = isNewCol
                   ? Array.from(new Set([...(data.addedColumns || []), colName]))
                   : data.addedColumns
-                setData({ ...data, headers: newHeaders, rows: newRows, addedColumns: updatedAdded })
+                setData(syncActiveSheet({ ...data, headers: newHeaders, rows: newRows, addedColumns: updatedAdded }))
                 setFormulaModalOpen(false)
                 notify(isNewCol ? `Added calculated column "${colName}"` : `Updated column "${colName}"`)
               }}
               onAppendSummaryRow={(type, colIndices) => {
                 setHistory([...history, data])
                 const newRows = appendSummaryRow(data.headers, data.rows, type, colIndices)
-                setData({ ...data, rows: newRows })
+                setData(syncActiveSheet({ ...data, rows: newRows }))
                 setFormulaModalOpen(false)
                 notify(`Added "${type}" row at the bottom of the table`)
               }}
@@ -1211,7 +1273,7 @@ function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange, onSnap
               primaryData={data}
               onMerge={(merged, summary) => {
                 setHistory([...history, data])
-                setData(merged)
+                setData(syncActiveSheet(merged))
                 setMergeModalOpen(false)
                 notify(summary)
               }}
@@ -1225,7 +1287,7 @@ function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange, onSnap
               rows={data.rows}
               onApply={(newRows, matchCount) => {
                 setHistory([...history, data])
-                setData({ ...data, rows: newRows })
+                setData(syncActiveSheet({ ...data, rows: newRows }))
                 setFindReplaceModalOpen(false)
                 notify(`Replaced ${matchCount} occurrence${matchCount === 1 ? '' : 's'}`)
               }}
@@ -1240,7 +1302,7 @@ function Spreadsheets({ addRecent, notify, onImportStatus, onDirtyChange, onSnap
               initialColIndex={selectedCol}
               onApply={(newRows, count, formatLabel) => {
                 setHistory([...history, data])
-                setData({ ...data, rows: newRows })
+                setData(syncActiveSheet({ ...data, rows: newRows }))
                 setFormatModalOpen(false)
                 notify(`Formatted ${count} cell${count === 1 ? '' : 's'} as ${formatLabel}`)
               }}
@@ -1923,6 +1985,7 @@ function FormulaModal({
                   onChange={e => setCustomFormula(e.target.value)}
                   placeholder="e.g. [Basic Pay] + [Allowance] - [Tax Deductions]"
                 />
+                <small>Use numbers, column references, +, −, ×, ÷, %, parentheses, and SUM, AVG, or ROUND. Custom formulas are numeric only.</small>
               </label>
 
               <div className="token-picker">
@@ -2474,10 +2537,13 @@ function FormatModal({
   )
 }
 
-function Reports({ templates, saveTemplate, addRecent, notify, onDirtyChange, onSnapshotChange }: {
+function Reports({ templates, saveTemplate, addRecent, defaultExport, pendingTemplate, onTemplateApplied, notify, onDirtyChange, onSnapshotChange }: {
   templates: SavedTemplate[]
   saveTemplate: (x: SavedTemplate) => void
   addRecent: (x: RecentFile) => void
+  defaultExport: string
+  pendingTemplate: SavedTemplate | null
+  onTemplateApplied: () => void
   notify: (s: string) => void
   onDirtyChange?: (dirty: boolean) => void
   onSnapshotChange?: (snapshot: { label: string; summary: string; tool: 'reports'; payload: unknown } | null) => void
@@ -2502,6 +2568,20 @@ function Reports({ templates, saveTemplate, addRecent, notify, onDirtyChange, on
   const [sections, setSections] = useState(defaultSections())
   const [lastSaved, setLastSaved] = useState<string | null>(null)
   const [templatesOpen, setTemplatesOpen] = useState(false)
+
+  useEffect(() => {
+    if (!pendingTemplate) return
+    const payload = pendingTemplate.payload as { title: string; period: string; prepared: string; office: string; sections: ReportSection[] }
+    setTitle(payload.title)
+    setPeriod(payload.period)
+    setPrepared(payload.prepared)
+    setOffice(payload.office)
+    setSections(payload.sections)
+    setRecoveredDraft(null)
+    setLastSaved(null)
+    onTemplateApplied()
+    notify(`Loaded "${pendingTemplate.name}" template`)
+  }, [pendingTemplate?.id])
 
   const handleRestore = () => {
     if (recoveredDraft?.data) {
@@ -2599,12 +2679,8 @@ function Reports({ templates, saveTemplate, addRecent, notify, onDirtyChange, on
           <button type="button" className="button secondary" onClick={handleNewReport}>
             New Report
           </button>
-          <button className="button secondary" onClick={() => setTemplatesOpen(true)}>
-            <Copy size={16}/> Use previous
-          </button>
-          <button className="button" onClick={save}>
-            <Save size={16}/> Save template
-          </button>
+          <button className="button secondary" onClick={() => setTemplatesOpen(true)}>Use previous</button>
+          <button className="button" onClick={save}>Save template</button>
         </div>
       </PageTitle>
 
@@ -2632,8 +2708,8 @@ function Reports({ templates, saveTemplate, addRecent, notify, onDirtyChange, on
             <span className="toolbar-spacer"/>
             <AutoSaveStatus lastSaved={lastSaved} isDirty={Boolean(lastSaved)} />
             <button className="icon-button" title="Print" onClick={() => print()}><Printer size={17}/></button>
-            <button className="button secondary" onClick={() => { exportDocx(title, lines); addRecent({ id: id(), name: title, type: 'Report', modified: 'Just now' }) }}>DOCX</button>
-            <button className="button" onClick={() => { exportPdf(title, lines); addRecent({ id: id(), name: title, type: 'Report', modified: 'Just now' }) }}>PDF</button>
+            <button className={defaultExport === 'DOCX' ? 'button' : 'button secondary'} onClick={() => { exportDocx(title, lines); addRecent({ id: id(), name: title, type: 'Report', modified: 'Just now' }) }}>DOCX</button>
+            <button className={defaultExport === 'PDF' ? 'button' : 'button secondary'} onClick={() => { exportPdf(title, lines); addRecent({ id: id(), name: title, type: 'Report', modified: 'Just now' }) }}>PDF</button>
           </div>
           <Paper zoom={.75} lines={[title, '', ...lines]}/>
         </section>
@@ -2740,6 +2816,10 @@ function Settings({
   setTheme,
   accent,
   setAccent,
+  rememberRecent,
+  setRememberRecent,
+  defaultExport,
+  setDefaultExport,
   clearRecent,
   templates,
   clearTemplates,
@@ -2755,6 +2835,10 @@ function Settings({
   setTheme: (v: string) => void
   accent: string
   setAccent: (v: string) => void
+  rememberRecent: boolean
+  setRememberRecent: (value: boolean) => void
+  defaultExport: string
+  setDefaultExport: (value: string) => void
   clearRecent: () => void
   templates: SavedTemplate[]
   clearTemplates: () => void
@@ -2858,10 +2942,10 @@ function Settings({
         <h2>Files</h2>
         <label className="toggle-row">
           <span>Remember recent files<small>Store only metadata for imported files.</small></span>
-          <input type="checkbox" defaultChecked />
+          <input type="checkbox" checked={rememberRecent} onChange={e => setRememberRecent(e.target.checked)} />
         </label>
         <label>Default export format
-          <select defaultValue="PDF">
+          <select value={defaultExport} onChange={e => setDefaultExport(e.target.value)}>
             <option>PDF</option>
             <option>DOCX</option>
             <option>Excel</option>
@@ -2898,20 +2982,20 @@ function Settings({
   )
 }
 
-function TemplateModal({ templates, load, close }: { templates: SavedTemplate[]; load: (t: SavedTemplate) => void; close: () => void }) { return <Modal title="Choose a template" close={close}>{templates.length ? <div className="template-picker">{templates.map(t => <button key={t.id} onClick={() => load(t)}><LayoutTemplate size={18}/><span><strong>{t.name}</strong><small>Updated {t.updatedAt}</small></span><ChevronRight size={17}/></button>)}</div> : <EmptyState title="No saved templates" text="Save your current work as a template to use it again."/>}</Modal> }
+function TemplateModal({ templates, load, close }: { templates: SavedTemplate[]; load: (t: SavedTemplate) => void; close: () => void }) { return <Modal title="Choose a template" close={close}>{templates.length ? <div className="template-picker">{templates.map(t => <button key={t.id} onClick={() => load(t)}><span><strong>{t.name}</strong><small>Updated {t.updatedAt}</small></span></button>)}</div> : <EmptyState title="No saved templates" text="Save your current work as a template to use it again."/>}</Modal> }
 
 function CommandPalette({ close, open, isAdmin }: { close: () => void; open: (page: Page) => void; isAdmin?: boolean }) {
   const [query, setQuery] = useState('')
-  const actions: { name: string; page: Page; icon: typeof FileText }[] = [
-    { name: 'New Document', page: 'documents', icon: FileText },
-    { name: 'Import Spreadsheet', page: 'spreadsheets', icon: FileSpreadsheet },
-    { name: 'New Report', page: 'reports', icon: BookOpenText },
-    { name: 'Generate Certificates', page: 'certificates', icon: Medal },
-    { name: 'Open Templates', page: 'templates', icon: LayoutTemplate },
-    { name: 'Open Archives', page: 'archives', icon: Archive },
-    { name: 'Open Recent Files', page: 'recent', icon: FileText },
-    { name: 'Settings', page: 'settings', icon: FileText },
-    ...(isAdmin ? [{ name: 'Admin Console', page: 'admin' as Page, icon: ShieldCheck }] : [])
+  const actions: { name: string; page: Page }[] = [
+    { name: 'New Document', page: 'documents' },
+    { name: 'Import Spreadsheet', page: 'spreadsheets' },
+    { name: 'New Report', page: 'reports' },
+    { name: 'Generate Certificates', page: 'certificates' },
+    { name: 'Open Templates', page: 'templates' },
+    { name: 'Open Archives', page: 'archives' },
+    { name: 'Open Recent Files', page: 'recent' },
+    { name: 'Settings', page: 'settings' },
+    ...(isAdmin ? [{ name: 'Admin Console', page: 'admin' as Page }] : [])
   ]
   const filtered = actions.filter(a => a.name.toLowerCase().includes(query.toLowerCase()))
   return (
@@ -2919,11 +3003,7 @@ function CommandPalette({ close, open, isAdmin }: { close: () => void; open: (pa
       <SearchField value={query} onChange={setQuery} placeholder="Search commands..." />
       <div className="command-list">
         {filtered.map(a => (
-          <button key={a.name} onClick={() => open(a.page)}>
-            <a.icon size={17} />
-            {a.name}
-            <ChevronRight size={16} />
-          </button>
+          <button key={a.name} onClick={() => open(a.page)}>{a.name}</button>
         ))}
       </div>
     </Modal>

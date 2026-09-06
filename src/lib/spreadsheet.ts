@@ -1,16 +1,21 @@
-import * as XLSX from 'xlsx'
 import type { SpreadsheetData } from '../types'
 
 export async function readSpreadsheet(file: File): Promise<SpreadsheetData> {
   const buffer = await file.arrayBuffer()
+  const XLSX = await import('xlsx')
   const book = XLSX.read(buffer, { type: 'array', raw: false })
   if (!book.SheetNames.length) throw new Error('This workbook does not contain any sheets.')
-  const sheet = book.Sheets[book.SheetNames[0]]
-  const data = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' })
-  if (!data.length) throw new Error('This spreadsheet is empty.')
-  const rows = data.map(row => Array.isArray(row) ? row.map(cell => String(cell ?? '')) : [])
-  const headers = rows[0].map((value, i) => value.trim() || `Column ${i + 1}`)
-  return { name: file.name, headers, rows: rows.slice(1), sheets: book.SheetNames }
+  const workbook = Object.fromEntries(book.SheetNames.map(sheetName => {
+    const data = XLSX.utils.sheet_to_json<unknown[]>(book.Sheets[sheetName], { header: 1, defval: '' })
+    const sheetRows = data.map(row => Array.isArray(row) ? row.map(cell => String(cell ?? '')) : [])
+    const headers = (sheetRows[0] || []).map((value, i) => value.trim() || `Column ${i + 1}`)
+    return [sheetName, { headers, rows: sheetRows.slice(1) }]
+  })) as Record<string, { headers: string[]; rows: string[][] }>
+  const sheets = book.SheetNames.filter(sheetName => workbook[sheetName].headers.length > 0)
+  if (!sheets.length) throw new Error('This spreadsheet is empty.')
+  const activeSheet = sheets[0]
+  const activeData = workbook[activeSheet]
+  return { name: file.name, headers: activeData.headers, rows: activeData.rows, sheets, activeSheet, workbook }
 }
 
 export type CleanMode =
@@ -633,57 +638,22 @@ export function evaluateColumnFormula(
   let affectedCount = 0
 
   const computedRows = rows.map(row => {
-    let isStringConcat = cleanFormula.includes('"') || cleanFormula.includes("'")
-
-    let expr = cleanFormula.replace(/\[(.*?)\]/g, (_, name) => {
+    const expr = cleanFormula.replace(/\[(.*?)\]/g, (_, name) => {
       const colIdx = headerMap.get(name.trim().toLowerCase())!
       const rawVal = (row[colIdx] || '').trim()
-
-      if (isStringConcat) {
-        return JSON.stringify(rawVal)
-      }
-
       const cleanNum = rawVal.replace(/[₱$,]/g, '')
       const numVal = Number(cleanNum)
-      if (isNaN(numVal) || cleanNum === '') {
-        isStringConcat = true
-        return JSON.stringify(rawVal)
-      }
+      if (isNaN(numVal) || cleanNum === '') throw new Error(`Column "${name.trim()}" contains a non-numeric value.`)
       return String(numVal)
-    })
-
-    expr = expr.replace(/SUM\((.*?)\)/gi, (_, args) => {
-      const parts = args.split(',').map((p: string) => Number(p.trim().replace(/[₱$,]/g, '')) || 0)
-      return String(parts.reduce((a: number, b: number) => a + b, 0))
-    })
-    expr = expr.replace(/AVG\((.*?)\)/gi, (_, args) => {
-      const parts = args.split(',').map((p: string) => Number(p.trim().replace(/[₱$,]/g, '')) || 0)
-      return String(parts.length ? parts.reduce((a: number, b: number) => a + b, 0) / parts.length : 0)
-    })
-    expr = expr.replace(/ROUND\((.*?),\s*(\d+)\)/gi, (_, valStr, decimals) => {
-      const v = Number(valStr.trim().replace(/[₱$,]/g, '')) || 0
-      const d = Number(decimals) || 0
-      return String(Number(v.toFixed(d)))
     })
 
     let calculatedResult = ''
     try {
-      const sanitizeExpr = expr.replace(/[^0-9+\-*/().%\s"'\\]/g, '')
-      if (isStringConcat || expr.includes('"') || expr.includes("'")) {
-        const fn = new Function(`return (${expr})`)
-        calculatedResult = String(fn() ?? '')
+      const numRes = evaluateNumericFormula(expr)
+      if (!isFinite(numRes) || isNaN(numRes)) {
+        calculatedResult = '#DIV/0!'
       } else {
-        const fn = new Function(`return (${sanitizeExpr})`)
-        const numRes = fn()
-        if (typeof numRes === 'number') {
-          if (!isFinite(numRes) || isNaN(numRes)) {
-            calculatedResult = '#DIV/0!'
-          } else {
-            calculatedResult = String(Math.round(numRes * 10000) / 10000)
-          }
-        } else {
-          calculatedResult = String(numRes ?? '')
-        }
+        calculatedResult = String(Math.round(numRes * 10000) / 10000)
       }
     } catch {
       calculatedResult = '#ERROR'
@@ -721,17 +691,93 @@ export function evaluateColumnFormula(
   }
 }
 
-export function exportSpreadsheet(data: SpreadsheetData, format: 'xlsx' | 'csv' | 'json') {
-  const sheet = XLSX.utils.aoa_to_sheet([data.headers, ...data.rows])
+/**
+ * Evaluates the intentionally small formula language used by custom spreadsheet
+ * calculations. It accepts only numbers, arithmetic operators, parentheses,
+ * and SUM, AVG, and ROUND function calls; it never evaluates JavaScript.
+ */
+function evaluateNumericFormula(expression: string): number {
+  const tokens = expression.match(/\s*(SUM|AVG|ROUND|\d*\.\d+|\d+|[()+\-*/%,])/gi)
+  if (!tokens || tokens.join('').replace(/\s/g, '').toUpperCase() !== expression.replace(/\s/g, '').toUpperCase()) {
+    throw new Error('Unsupported formula syntax.')
+  }
+
+  const stream = tokens.map(token => token.trim()).filter(Boolean)
+  let position = 0
+  const peek = () => stream[position]
+  const consume = () => stream[position++]
+  const expect = (token: string) => {
+    if (consume() !== token) throw new Error('Invalid formula syntax.')
+  }
+
+  const parseExpression = (): number => {
+    let value = parseTerm()
+    while (peek() === '+' || peek() === '-') {
+      value = consume() === '+' ? value + parseTerm() : value - parseTerm()
+    }
+    return value
+  }
+
+  const parseTerm = (): number => {
+    let value = parseFactor()
+    while (peek() === '*' || peek() === '/' || peek() === '%') {
+      const operator = consume()
+      const right = parseFactor()
+      if (operator === '*') value *= right
+      if (operator === '/') value /= right
+      if (operator === '%') value %= right
+    }
+    return value
+  }
+
+  const parseFactor = (): number => {
+    if (peek() === '+') { consume(); return parseFactor() }
+    if (peek() === '-') { consume(); return -parseFactor() }
+    if (peek() === '(') {
+      consume()
+      const value = parseExpression()
+      expect(')')
+      return value
+    }
+
+    const token = consume()
+    if (!token) throw new Error('Unexpected end of formula.')
+    if (/^\d*\.?\d+$/.test(token)) return Number(token)
+
+    const functionName = token.toUpperCase()
+    if (!['SUM', 'AVG', 'ROUND'].includes(functionName)) throw new Error('Unsupported formula function.')
+    expect('(')
+    const args: number[] = [parseExpression()]
+    while (peek() === ',') {
+      consume()
+      args.push(parseExpression())
+    }
+    expect(')')
+
+    if (functionName === 'SUM') return args.reduce((total, value) => total + value, 0)
+    if (functionName === 'AVG') return args.reduce((total, value) => total + value, 0) / args.length
+    if (args.length !== 2 || !Number.isInteger(args[1]) || args[1] < 0 || args[1] > 100) {
+      throw new Error('ROUND requires a value and a whole-number decimal count.')
+    }
+    return Number(args[0].toFixed(args[1]))
+  }
+
+  const value = parseExpression()
+  if (position !== stream.length) throw new Error('Invalid formula syntax.')
+  return value
+}
+
+export async function exportSpreadsheet(data: SpreadsheetData, format: 'xlsx' | 'csv' | 'json') {
   const filename = data.name.replace(/\.[^.]+$/, '')
   if (format === 'json') {
     const json = data.rows.map(row => Object.fromEntries(data.headers.map((h, i) => [h, row[i] || ''])))
     download(new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' }), `${filename}.json`)
     return
   }
+  const XLSX = await import('xlsx')
+  const sheet = XLSX.utils.aoa_to_sheet([data.headers, ...data.rows])
   const book = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book, sheet, 'Data')
   XLSX.writeFile(book, `${filename}.${format}`)
 }
 
 export function download(blob: Blob, filename: string) { const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url) }
-

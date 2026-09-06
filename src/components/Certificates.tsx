@@ -35,6 +35,8 @@ interface CertificatesProps {
   templates: SavedTemplate[]
   saveTemplate: (t: SavedTemplate) => void
   addRecent: (f: RecentFile) => void
+  pendingTemplate: SavedTemplate | null
+  onTemplateApplied: () => void
   notify: (msg: string) => void
   onImportStatus?: (status: ImportStatus | null) => void
   onDirtyChange?: (dirty: boolean) => void
@@ -73,7 +75,7 @@ interface CertDraft {
   venueCol?: string
 }
 
-export function Certificates({ templates, saveTemplate, addRecent, notify, onImportStatus, onDirtyChange, onSnapshotChange }: CertificatesProps) {
+export function Certificates({ templates, saveTemplate, addRecent, pendingTemplate, onTemplateApplied, notify, onImportStatus, onDirtyChange, onSnapshotChange }: CertificatesProps) {
   const initialSnapshot = useRef<StoredDraft<CertDraft> | null>(storage.getDraftSnapshot<CertDraft>('certificates')).current
   const hasUnsavedWork = Boolean(
     initialSnapshot &&
@@ -118,6 +120,15 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
   const [eventCol, setEventCol] = useState('')
   const [dateCol, setDateCol] = useState('')
   const [venueCol, setVenueCol] = useState('')
+
+  useEffect(() => {
+    if (!pendingTemplate) return
+    setCert(pendingTemplate.payload as CertificateData)
+    setRecoveredDraft(null)
+    setLastSaved(null)
+    onTemplateApplied()
+    notify(`Loaded "${pendingTemplate.name}" template`)
+  }, [pendingTemplate?.id])
 
   const handleRestore = () => {
     if (recoveredDraft?.data) {
@@ -398,12 +409,8 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
           <button type="button" className="button secondary" onClick={handleNewProject}>
             New Project
           </button>
-          <button className="button secondary" onClick={() => setTemplatesOpen(true)}>
-            <LayoutTemplate size={16} /> Templates
-          </button>
-          <button className="button" onClick={saveAsTemplate}>
-            <Save size={16} /> Save template
-          </button>
+          <button className="button secondary" onClick={() => setTemplatesOpen(true)}>Templates</button>
+          <button className="button" onClick={saveAsTemplate}>Save template</button>
         </div>
       </PageTitle>
 
@@ -463,9 +470,7 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
             onChange={e => importList(e.target.files?.[0])}
           />
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
-            <button className="button cert-action-btn" onClick={() => fileRef.current?.click()}>
-              <Upload size={16} /> Choose Spreadsheet
-            </button>
+            <button className="button cert-action-btn" onClick={() => fileRef.current?.click()}>Choose Spreadsheet</button>
             <button
               type="button"
               className="button secondary cert-action-btn"
@@ -641,12 +646,8 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
             </div>
 
             <div className="card-actions-row">
-              <button className="button secondary" onClick={() => setStep(1)}>
-                <ChevronLeft size={16} /> Back
-              </button>
-              <button className="button" onClick={() => setStep(3)}>
-                Proceed to Certificate Design <ChevronRight size={16} />
-              </button>
+              <button className="button secondary" onClick={() => setStep(1)}>Back</button>
+              <button className="button" onClick={() => setStep(3)}>Proceed to Certificate Design</button>
             </div>
           </div>
         </section>
@@ -887,9 +888,7 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
                     type="button"
                     className="button secondary sm-btn"
                     onClick={() => logoInputRef.current?.click()}
-                  >
-                    <Upload size={14} /> Upload Logo
-                  </button>
+                  >Upload Logo</button>
                 )}
                 <input
                   ref={logoInputRef}
@@ -937,9 +936,7 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
                     type="button"
                     className="button secondary sm-btn"
                     onClick={() => sig1InputRef.current?.click()}
-                  >
-                    <Upload size={14} /> Upload Signature
-                  </button>
+                  >Upload Signature</button>
                 )}
                 <input
                   ref={sig1InputRef}
@@ -993,9 +990,7 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
                       type="button"
                       className="button secondary sm-btn"
                       onClick={() => sig2InputRef.current?.click()}
-                    >
-                      <Upload size={14} /> Upload Signature
-                    </button>
+                    >Upload Signature</button>
                   )}
                   <input
                     ref={sig2InputRef}
@@ -1034,9 +1029,7 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
             )}
 
             <div className="cert-flow-actions">
-              <button className="button" onClick={() => setStep(4)}>
-                Preview Certificate <ChevronRight size={16} />
-              </button>
+              <button className="button" onClick={() => setStep(4)}>Preview Certificate</button>
             </div>
           </div>
 
@@ -1070,9 +1063,7 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
                 className="button secondary sm-btn"
                 disabled={index === 0}
                 onClick={() => setIndex(Math.max(0, index - 1))}
-              >
-                <ChevronLeft size={16} /> Previous
-              </button>
+              >Previous</button>
               <span>
                 Participant <strong>{index + 1}</strong> of <strong>{participants.length || 1}</strong>: &nbsp;
                 <em>{resolvedCurrent.name}</em>
@@ -1081,9 +1072,7 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
                 className="button secondary sm-btn"
                 disabled={index >= participants.length - 1}
                 onClick={() => setIndex(Math.min(participants.length - 1, index + 1))}
-              >
-                Next <ChevronRight size={16} />
-              </button>
+              >Next</button>
             </div>
 
             <div className="zoom-controls">
@@ -1139,9 +1128,7 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
             <button className="button secondary" onClick={() => setStep(3)}>
               Modify Design
             </button>
-            <button className="button" onClick={() => setStep(5)}>
-              Proceed to Generate ({participants.length}) <ChevronRight size={16} />
-            </button>
+            <button className="button" onClick={() => setStep(5)}>Proceed to Generate ({participants.length})</button>
           </div>
 
           <div className="drag-hint-banner">
@@ -1198,9 +1185,7 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
                   Combines all <strong>{participants.length}</strong> certificates into a single multi-page PDF document.
                   Open once, print all pages effortlessly.
                 </p>
-                <button className="button cert-big-btn" onClick={handleCombinedPdf}>
-                  <Download size={18} /> Download Combined PDF
-                </button>
+                <button className="button cert-big-btn" onClick={handleCombinedPdf}>Download Combined PDF</button>
               </div>
 
               {/* Option 2: Individual PDFs in ZIP */}
@@ -1214,17 +1199,13 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
                   Generates an individual, sanitized PDF for each participant (e.g. <code>Certificate_Juan_Dela_Cruz.pdf</code>)
                   packaged cleanly inside 1 zip archive.
                 </p>
-                <button className="button secondary cert-big-btn" onClick={handleZipDownload}>
-                  <Archive size={18} /> Download ZIP Archive
-                </button>
+                <button className="button secondary cert-big-btn" onClick={handleZipDownload}>Download ZIP Archive</button>
               </div>
             </div>
           )}
 
           <div className="generation-footer-nav">
-            <button className="button secondary" disabled={isGenerating} onClick={() => setStep(4)}>
-              <ChevronLeft size={16} /> Back to Preview
-            </button>
+            <button className="button secondary" disabled={isGenerating} onClick={() => setStep(4)}>Back to Preview</button>
             <button
               className="button secondary"
               disabled={isGenerating}
@@ -1233,9 +1214,7 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
                 setParticipants([])
                 notify('Reset to start new batch')
               }}
-            >
-              <RotateCcw size={15} /> Start New Batch
-            </button>
+            >Start New Batch</button>
           </div>
         </section>
       )}
@@ -1256,12 +1235,10 @@ export function Certificates({ templates, saveTemplate, addRecent, notify, onImp
                   .filter(t => t.category === 'Certificate')
                   .map(t => (
                     <button key={t.id} onClick={() => loadTemplate(t)}>
-                      <LayoutTemplate size={18} />
                       <span>
                         <strong>{t.name}</strong>
                         <small>Updated {t.updatedAt}</small>
                       </span>
-                      <ChevronRight size={17} />
                     </button>
                   ))
               ) : (
