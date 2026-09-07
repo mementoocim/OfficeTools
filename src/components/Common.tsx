@@ -39,10 +39,10 @@ export function CrashRecoveryBanner({
       </div>
       <div className="crash-recovery-actions">
         <button type="button" className="button sm" onClick={onRestore}>
-          Restore Draft
+          Restore
         </button>
-        <button type="button" className="button secondary sm" onClick={onDiscard}>
-          Discard & Start Blank
+        <button type="button" className="button secondary sm recovery-discard" onClick={onDiscard}>
+          Discard
         </button>
       </div>
     </div>

@@ -14,6 +14,7 @@ export function AdminPanel({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | UserStatus>('all')
   const [showSqlGuide, setShowSqlGuide] = useState(false)
   const [copiedSql, setCopiedSql] = useState(false)
 
@@ -50,18 +51,17 @@ export function AdminPanel({
     }
   }
 
-  const handleStatusToggle = async (user: UserProfile) => {
+  const handleStatusChange = async (user: UserProfile, newStatus: UserStatus) => {
     if (user.id === currentUser?.id) {
       onNotify('You cannot deactivate your own admin account.')
       return
     }
-    const newStatus: UserStatus = user.status === 'active' ? 'disabled' : 'active'
     const { error: err } = await updateUserStatus(user.id, newStatus)
     if (err) {
       onNotify(`Error: ${err}`)
     } else {
       setUsers(users.map(u => u.id === user.id ? { ...u, status: newStatus } : u))
-      onNotify(`User account has been ${newStatus === 'active' ? 'activated' : 'deactivated'}`)
+      onNotify(`User account has been ${newStatus === 'active' ? 'approved' : 'rejected'}`)
     }
   }
 
@@ -73,20 +73,22 @@ export function AdminPanel({
   }
 
   const filteredUsers = users.filter(u => {
-    if (!search) return true
+    const matchesStatus = statusFilter === 'all' || u.status === statusFilter
+    if (!search) return matchesStatus
     const q = search.toLowerCase()
-    return (u.full_name || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q) || u.role.includes(q)
+    return matchesStatus && ((u.full_name || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q) || u.role.includes(q))
   })
 
   const adminCount = users.filter(u => u.role === 'admin').length
   const staffCount = users.filter(u => u.role === 'staff').length
+  const pendingCount = users.filter(u => u.status === 'pending').length
 
   return (
     <div className="page admin-page">
       <div className="page-title">
         <div>
           <h1>Admin Console</h1>
-          <p>Manage office staff accounts, role permissions, and database connectivity.</p>
+          <p>Approve new staff accounts, manage permissions, and control workspace access.</p>
         </div>
         <div className="header-actions">
           <button type="button" className="button secondary" onClick={loadUsers}>
@@ -103,8 +105,8 @@ export function AdminPanel({
         <div className="admin-sql-guide">
           <div className="sql-guide-header">
             <div>
-              <h3>Supabase Database Schema & Auto-Admin Trigger</h3>
-              <p>Run this script once in your Supabase SQL Editor to initialize the user profiles table and automatic admin privileges for the first registered user.</p>
+              <h3>Supabase Database Schema & Approval Flow</h3>
+              <p>Run this script in your Supabase SQL Editor. The first account remains the administrator; later registrations are created as pending until you approve them here.</p>
             </div>
             <button type="button" className="button sm" onClick={handleCopySql}>
               {copiedSql ? 'Copied!' : 'Copy SQL Script'}
@@ -128,6 +130,10 @@ export function AdminPanel({
           <span className="admin-stat-label">Staff Members</span>
           <strong className="admin-stat-val">{staffCount}</strong>
         </div>
+        <div className="admin-stat-card pending-stat">
+          <span className="admin-stat-label">Awaiting Approval</span>
+          <strong className="admin-stat-val">{pendingCount}</strong>
+        </div>
         <div className="admin-stat-card">
           <span className="admin-stat-label">Database Connection</span>
           <strong className="admin-stat-val" style={{ color: config.isConfigured ? '#245b4b' : '#a1413a' }}>
@@ -142,13 +148,23 @@ export function AdminPanel({
           <div className="section-heading" style={{ marginBottom: 0 }}>
             <h2>User Accounts & Permissions</h2>
           </div>
-          <input
-            type="text"
-            className="admin-search-input"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Filter by name, email, or role..."
-          />
+          <div className="admin-filter-controls">
+            <div className="segmented admin-status-filter" aria-label="Filter users by account status">
+              {([
+                ['all', `All (${users.length})`],
+                ['pending', `Pending (${pendingCount})`],
+                ['active', `Active (${users.filter(u => u.status === 'active').length})`],
+                ['disabled', `Deactivated (${users.filter(u => u.status === 'disabled').length})`]
+              ] as const).map(([status, label]) => <button type="button" key={status} className={statusFilter === status ? 'selected' : ''} onClick={() => setStatusFilter(status)}>{label}</button>)}
+            </div>
+            <input
+              type="text"
+              className="admin-search-input"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Filter by name, email, or role..."
+            />
+          </div>
         </div>
 
         {error && (
@@ -181,7 +197,7 @@ export function AdminPanel({
                 {filteredUsers.map(user => {
                   const isCurrent = user.id === currentUser?.id
                   return (
-                    <tr key={user.id} className={user.status === 'disabled' ? 'user-row-disabled' : ''}>
+                    <tr key={user.id} className={user.status === 'disabled' ? 'user-row-disabled' : user.status === 'pending' ? 'user-row-pending' : ''}>
                       <td>
                         <div className="user-name-cell">
                           <strong>{user.full_name || 'Staff Member'} {isCurrent && <span className="current-user-tag">You</span>}</strong>
@@ -201,7 +217,7 @@ export function AdminPanel({
                       </td>
                       <td>
                         <span className={`status-badge ${user.status}`}>
-                          {user.status === 'active' ? 'Active' : 'Deactivated'}
+                          {user.status === 'active' ? 'Active' : user.status === 'pending' ? 'Awaiting approval' : 'Deactivated'}
                         </span>
                       </td>
                       <td>
@@ -210,14 +226,19 @@ export function AdminPanel({
                         </small>
                       </td>
                       <td>
-                        <button
-                          type="button"
-                          className={`button sm ${user.status === 'active' ? 'secondary danger-button' : 'secondary'}`}
-                          disabled={isCurrent}
-                          onClick={() => handleStatusToggle(user)}
-                        >
-                          {user.status === 'active' ? 'Deactivate' : 'Activate'}
-                        </button>
+                        <div className="admin-user-actions">
+                          {user.status === 'pending' ? <>
+                            <button type="button" className="button sm" disabled={isCurrent} onClick={() => handleStatusChange(user, 'active')}>Approve</button>
+                            <button type="button" className="button sm secondary danger-button" disabled={isCurrent} onClick={() => handleStatusChange(user, 'disabled')}>Reject</button>
+                          </> : <button
+                            type="button"
+                            className={`button sm ${user.status === 'active' ? 'secondary danger-button' : 'secondary'}`}
+                            disabled={isCurrent}
+                            onClick={() => handleStatusChange(user, user.status === 'active' ? 'disabled' : 'active')}
+                          >
+                            {user.status === 'active' ? 'Deactivate' : 'Re-approve'}
+                          </button>}
+                        </div>
                       </td>
                     </tr>
                   )

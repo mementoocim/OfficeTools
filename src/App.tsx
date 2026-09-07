@@ -1,6 +1,7 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, AlertTriangle, Archive, ArrowDown, ArrowUp, ArrowUpDown, BookOpenText, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, FileDown, FileSpreadsheet, FileText, Keyboard, LayoutTemplate, Loader2, Medal, MoreHorizontal, Plus, Printer, RotateCcw, Save, ShieldCheck, Sparkles, Trash2, Upload, WandSparkles, X } from 'lucide-react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { AlertCircle, AlertTriangle, Archive, ArrowDown, ArrowUp, ArrowUpDown, BookOpenText, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, FileDown, FileSpreadsheet, FileText, Keyboard, LayoutTemplate, Loader2, Medal, Plus, Printer, RotateCcw, Save, ShieldCheck, Sparkles, Trash2, Upload, WandSparkles, X } from 'lucide-react'
 import { AppSidebar } from './components/AppSidebar'
+import { HelpAssistant } from './components/HelpAssistant'
 import { AutoSaveStatus, CrashRecoveryBanner, EmptyState, LocalBadge, Modal, PageTitle, SearchField, ToolCard } from './components/Common'
 import type { ArchivedItem, CertificateData, DocumentData, ImportStatus, Page, RecentFile, ReportSection, SavedTemplate, SpreadsheetData } from './types'
 import { storage, type StoredDraft } from './lib/storage'
@@ -21,7 +22,7 @@ import {
   type CleanMode,
   type ColumnFormatType
 } from './lib/spreadsheet'
-import { exportDocx, exportPdf } from './lib/export'
+import { exportBulkDocumentsZip, exportDocx, exportPdf } from './lib/export'
 import { AuthModal } from './components/AuthModal'
 import { AuthScreen } from './components/AuthScreen'
 import { OnboardingModal } from './components/OnboardingModal'
@@ -33,7 +34,23 @@ import type { UserProfile } from './types/auth'
 const Certificates = lazy(() => import('./components/Certificates').then(module => ({ default: module.Certificates })))
 
 const id = () => crypto.randomUUID()
-const initialDocument: DocumentData = { type: 'Letter', date: new Date().toLocaleDateString('en-CA'), recipientName: '', recipientPosition: '', organization: '', address: '', subject: '', greeting: 'Dear Sir/Madam,', body: 'I am writing to respectfully submit this letter for your consideration.', closing: 'Respectfully yours,', senderName: 'Mico', senderPosition: '' }
+const initialDocument: DocumentData = { type: 'Letter', date: new Date().toLocaleDateString('en-CA'), recipientName: '', recipientPosition: '', organization: '', address: '', subject: '', greeting: 'Dear Sir/Madam,', body: 'I am writing to respectfully submit this letter for your consideration.', closing: 'Respectfully yours,', senderName: 'Mico', senderPosition: '', pageSize: 'A4', margins: 'standard', fontFamily: 'Georgia', fontSize: 12 }
+const documentTemplate = (data: Partial<DocumentData>): DocumentData => ({ ...initialDocument, ...data })
+const builtInDocumentTemplates: { id: string; name: string; description: string; data: DocumentData }[] = [
+  { id: 'formal-letter', name: 'Formal Letter', description: 'General-purpose official correspondence.', data: documentTemplate({ subject: 'Request for [Subject]', body: 'I am writing to respectfully request [details of your request].\n\nYour favorable consideration on this matter would be greatly appreciated.' }) },
+  { id: 'memorandum', name: 'Memorandum', description: 'Internal office communication and directives.', data: documentTemplate({ type: 'Memorandum', greeting: '', closing: '', subject: '[Subject]', body: 'This is to inform all concerned of the following:\n\n[State the purpose, instructions, and relevant details.]\n\nFor your information and guidance.' }) },
+  { id: 'endorsement', name: 'Endorsement Letter', description: 'Forward a request or document for action.', data: documentTemplate({ type: 'Endorsement', subject: 'Endorsement of [Document / Request]', body: 'Respectfully forwarded is the attached [document / request] for your appropriate action.\n\nFor your consideration.' }) },
+  { id: 'certification', name: 'Certification', description: 'Certify an office record, fact, or service.', data: documentTemplate({ type: 'Certification', greeting: 'To Whom It May Concern:', subject: 'Certification', body: 'This is to certify that [name / record / fact] is true and correct based on the records of this Office.\n\nThis certification is issued upon the request of the concerned party for whatever lawful purpose it may serve.' }) },
+  { id: 'invitation', name: 'Invitation Letter', description: 'Invite a recipient to an office event.', data: documentTemplate({ type: 'Invitation', subject: 'Invitation to [Event]', body: 'We are pleased to invite you to [event] on [date] at [time], to be held at [venue].\n\nYour presence and participation will be greatly appreciated.' }) },
+  { id: 'transmittal', name: 'Transmittal Letter', description: 'Transmit records, reports, or attachments.', data: documentTemplate({ type: 'Transmittal', subject: 'Transmittal of [Document]', body: 'Respectfully transmitted is the attached [document / report] for your reference and appropriate action.\n\nPlease acknowledge receipt.' }) }
+]
+type DocumentPageSetup = { pageSize: 'A4' | 'Letter' | 'Legal'; margins: 'standard' | 'narrow' | 'wide'; fontFamily: string; fontSize: number }
+const pageSetupFor = (document: DocumentData): DocumentPageSetup => ({
+  pageSize: document.pageSize || 'A4',
+  margins: document.margins || 'standard',
+  fontFamily: document.fontFamily || 'Georgia',
+  fontSize: document.fontSize || 12
+})
 const initialCertificate: CertificateData = { title: 'Certificate of Participation', subtitle: 'This certificate is proudly presented to', description: 'for successfully participating in\n\n{{event}}\n\nheld on {{date}}.', event: 'Training Program', date: new Date().toLocaleDateString(), venue: '', signatory: '', signatoryPosition: '', borderStyle: 'gold', includeQr: true }
 const defaultSections = (): ReportSection[] => ['Summary', 'Activities Conducted', 'Participants / Beneficiaries', 'Key Accomplishments', 'Issues / Concerns', 'Recommendations', 'Next Steps'].map(title => ({ id: id(), title, content: '', type: 'Text' }))
 
@@ -69,7 +86,7 @@ export default function App() {
   const [archives, setArchives] = useState<ArchivedItem[]>(storage.archives())
   const [templateToOpen, setTemplateToOpen] = useState<SavedTemplate | null>(null)
   const [theme, setTheme] = useState<string>(String(storage.settings().theme || 'system'))
-  const [accent, setAccent] = useState<string>(String(storage.settings().accent || 'emerald'))
+  const [accent, setAccent] = useState<string>(String(storage.settings().accent || 'blue'))
   const [rememberRecent, setRememberRecent] = useState(Boolean(storage.settings().rememberRecent ?? true))
   const [defaultExport, setDefaultExport] = useState<string>(String(storage.settings().defaultExport || 'PDF'))
   const [notice, setNotice] = useState('')
@@ -92,7 +109,7 @@ export default function App() {
     supabase.auth.getSession().then(({ data }) => {
       if (data.session?.user) {
         fetchUserProfile(data.session.user.id, data.session.user.email || '').then(profile => {
-          if (profile.status === 'disabled') {
+          if (profile.status !== 'active') {
             supabase.auth.signOut()
             setCurrentUser(null)
           } else {
@@ -115,10 +132,10 @@ export default function App() {
     const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (session?.user) {
         const profile = await fetchUserProfile(session.user.id, session.user.email || '')
-        if (profile.status === 'disabled') {
+        if (profile.status !== 'active') {
           await supabase.auth.signOut()
           setCurrentUser(null)
-          notify('Your account has been deactivated.')
+          notify(profile.status === 'pending' ? 'Your account is awaiting administrator approval.' : 'Your account has been deactivated.')
         } else {
           setCurrentUser(profile)
           if (!localStorage.getItem(`office_toolkit_onboarded_${profile.id}`)) {
@@ -421,6 +438,7 @@ export default function App() {
       )}
     </main>
     <button className="command-hint" onClick={() => setCommandOpen(true)}>Command menu <kbd>Ctrl K</kbd></button>
+    <HelpAssistant page={page} />
     {notice && <div className="toast">{notice}</div>}
     {importStatus && (
       <aside className={`import-toast ${importStatus.status}`} aria-live="polite">
@@ -529,9 +547,60 @@ function Documents({ templates, saveTemplate, addRecent, defaultExport, pendingT
   const [lastSaved, setLastSaved] = useState<string | null>(null)
   const [zoom, setZoom] = useState(0.75)
   const [templateOpen, setTemplateOpen] = useState(false)
+  const [bulkOpen, setBulkOpen] = useState(false)
+  const [pageSetupOpen, setPageSetupOpen] = useState(false)
+  const canvasEditorRef = useRef<HTMLElement>(null)
   const update = (field: keyof DocumentData, value: string) => setDoc({ ...doc, [field]: value })
   const title = doc.subject || `${doc.type} document`
   const lines = documentLines(doc)
+  const pageSetup = pageSetupFor(doc)
+  const exportOptions = { ...pageSetup, includeTitle: false }
+
+  useEffect(() => {
+    const editor = canvasEditorRef.current
+    if (!editor) return
+    if (editor.contains(document.activeElement)) return
+    const html = documentCanvasHtml(doc)
+    if (editor.innerHTML !== html) editor.innerHTML = html
+  }, [doc])
+
+  const syncDocumentCanvas = () => {
+    const editor = canvasEditorRef.current
+    if (!editor) return
+    const fieldValue = (field: keyof DocumentData) => editor.querySelector(`[data-field="${field}"]`)?.textContent?.trim() || ''
+    const body = editor.querySelector('[data-field="body"]') as HTMLElement | null
+    setDoc(current => ({
+      ...current,
+      date: fieldValue('date'),
+      recipientName: fieldValue('recipientName'),
+      recipientPosition: fieldValue('recipientPosition'),
+      organization: fieldValue('organization'),
+      address: fieldValue('address'),
+      subject: fieldValue('subject'),
+      greeting: fieldValue('greeting'),
+      body: richBodyHtml(body?.innerHTML || ''),
+      closing: fieldValue('closing'),
+      senderName: fieldValue('senderName'),
+      senderPosition: fieldValue('senderPosition')
+    }))
+  }
+  const runEditorCommand = (command: string, value?: string) => {
+    const editor = canvasEditorRef.current
+    if (!editor) return
+    editor.focus()
+    document.execCommand(command, false, value)
+    syncDocumentCanvas()
+  }
+  const setLineHeight = (value: string) => {
+    const selection = window.getSelection()
+    const anchor = selection?.anchorNode
+    const element = anchor?.nodeType === Node.ELEMENT_NODE ? anchor as Element : anchor?.parentElement
+    const block = element?.closest('p, div, li, h1, h2, h3') as HTMLElement | null
+    if (!block) return
+    block.style.lineHeight = value
+    syncDocumentCanvas()
+  }
+  const insertPageBreak = () => runEditorCommand('insertHTML', '<hr class="page-break" /><p><br /></p>')
 
   useEffect(() => {
     if (!pendingTemplate) return
@@ -614,8 +683,23 @@ function Documents({ templates, saveTemplate, addRecent, defaultExport, pendingT
     setRecoveredDraft(null)
     notify('Template loaded')
   }
+  const loadBuiltInTemplate = (template: DocumentData) => {
+    setDoc({ ...template, date: new Date().toLocaleDateString('en-CA') })
+    setTemplateOpen(false)
+    setRecoveredDraft(null)
+    notify('Office template loaded')
+  }
   const save = () => { const name = prompt('Template name', doc.subject || 'Untitled Letter'); if (name) saveTemplate({ id: id(), name, category: 'Document', updatedAt: new Date().toLocaleString(), payload: doc }) }
   const record = () => addRecent({ id: id(), name: title, type: 'Document', modified: 'Just now' })
+  const printDocument = () => {
+    const style = document.createElement('style')
+    style.textContent = `@page { size: ${pageSetup.pageSize}; margin: 0; }`
+    document.head.append(style)
+    const cleanup = () => style.remove()
+    window.addEventListener('afterprint', cleanup, { once: true })
+    window.print()
+    window.setTimeout(cleanup, 1000)
+  }
   return (
     <div className="page workspace">
       <PageTitle title="Document Generator" subtitle="Create polished office documents in a few focused steps">
@@ -624,7 +708,9 @@ function Documents({ templates, saveTemplate, addRecent, defaultExport, pendingT
           <button type="button" className="button secondary" onClick={handleNewDocument}>
             New Document
           </button>
+          <button className="button secondary" onClick={() => setPageSetupOpen(true)}>Page setup</button>
           <button className="button secondary" onClick={() => setTemplateOpen(true)}>Templates</button>
+          <button className="button secondary" onClick={() => setBulkOpen(true)}>Bulk generate</button>
           <button className="button" onClick={save}>Save template</button>
         </div>
       </PageTitle>
@@ -638,14 +724,8 @@ function Documents({ templates, saveTemplate, addRecent, defaultExport, pendingT
         />
       )}
 
-      <div className="editor-layout">
-        <section className="field-panel">
-          <label>Document type<select value={doc.type} onChange={e => update('type', e.target.value)}><option>Letter</option><option>Memo</option><option>Simple Report</option><option>Certificate</option></select></label>
-          {([['date','Date'],['recipientName','Recipient name'],['recipientPosition','Recipient position'],['organization','Office / Organization'],['address','Address'],['subject','Subject'],['greeting','Greeting']] as [keyof DocumentData, string][]).map(([key, label]) => <label key={key}>{label}<input value={doc[key]} onChange={e => update(key, e.target.value)}/></label>)}
-          <label>Body<textarea rows={7} value={doc.body} onChange={e => update('body', e.target.value)} /></label>
-          {([['closing','Closing'],['senderName','Sender name'],['senderPosition','Sender position']] as [keyof DocumentData, string][]).map(([key, label]) => <label key={key}>{label}<input value={doc[key]} onChange={e => update(key, e.target.value)}/></label>)}
-        </section>
-        <section className="preview-area">
+      <div className="editor-layout document-canvas-layout">
+        <section className="preview-area document-editor-preview">
           <div className="preview-toolbar">
             <button className="icon-button" onClick={() => setZoom(Math.max(.5, zoom - .1))}>−</button>
             <span>{Math.round(zoom * 100)}%</span>
@@ -653,19 +733,103 @@ function Documents({ templates, saveTemplate, addRecent, defaultExport, pendingT
             <button className="text-button" onClick={() => setZoom(.75)}>Fit page</button>
             <span className="toolbar-spacer"/>
             <AutoSaveStatus lastSaved={lastSaved} isDirty={Boolean(lastSaved)} />
-            <button className="icon-button" title="Print" onClick={() => print()}><Printer size={17}/></button>
-            <button className={defaultExport === 'DOCX' ? 'button' : 'button secondary'} onClick={() => { exportDocx(title, lines); record() }}>DOCX</button>
-            <button className={defaultExport === 'PDF' ? 'button' : 'button secondary'} onClick={() => { exportPdf(title, lines); record() }}>PDF</button>
+            <button className="icon-button" title="Print" onClick={printDocument}><Printer size={17}/></button>
+            <button className={defaultExport === 'DOCX' ? 'button' : 'button secondary'} onClick={() => { exportDocx(title, lines, exportOptions); record() }}>DOCX</button>
+            <button className={defaultExport === 'PDF' ? 'button' : 'button secondary'} onClick={() => { exportPdf(title, lines, exportOptions); record() }}>PDF</button>
           </div>
-          <Paper zoom={zoom} lines={lines}/>
+          <div className="rich-editor-toolbar canvas-rich-editor-toolbar" role="toolbar" aria-label="Document text formatting">
+            <select aria-label="Font family" value={pageSetup.fontFamily} onChange={event => setDoc(current => ({ ...current, fontFamily: event.target.value }))}>
+              <option value="Calibri">Calibri</option><option value="Aptos">Aptos</option><option value="Times New Roman">Times New Roman</option><option value="Arial">Arial</option><option value="Georgia">Georgia</option><option value="Verdana">Verdana</option><option value="Tahoma">Tahoma</option>
+            </select>
+            <input className="rich-font-size" aria-label="Font size in points" type="number" min="6" max="72" step="1" value={pageSetup.fontSize} onChange={event => { const size = Number(event.target.value); if (Number.isFinite(size)) setDoc(current => ({ ...current, fontSize: size })) }} />
+            <select aria-label="Text style" defaultValue="p" onChange={event => runEditorCommand('formatBlock', event.target.value)}>
+              <option value="p">Paragraph</option><option value="h2">Heading</option><option value="h3">Subheading</option>
+            </select>
+            <button type="button" className="rich-toolbar-button" title="Bold" aria-label="Bold" onMouseDown={event => event.preventDefault()} onClick={() => runEditorCommand('bold')}><b>B</b></button>
+            <button type="button" className="rich-toolbar-button" title="Italic" aria-label="Italic" onMouseDown={event => event.preventDefault()} onClick={() => runEditorCommand('italic')}><i>I</i></button>
+            <button type="button" className="rich-toolbar-button" title="Underline" aria-label="Underline" onMouseDown={event => event.preventDefault()} onClick={() => runEditorCommand('underline')}><u>U</u></button>
+            <button type="button" className="rich-toolbar-button" title="Bulleted list" aria-label="Bulleted list" onMouseDown={event => event.preventDefault()} onClick={() => runEditorCommand('insertUnorderedList')}>•</button>
+            <button type="button" className="rich-toolbar-button" title="Numbered list" aria-label="Numbered list" onMouseDown={event => event.preventDefault()} onClick={() => runEditorCommand('insertOrderedList')}>1.</button>
+            <button type="button" className="rich-toolbar-button" title="Align left" aria-label="Align left" onMouseDown={event => event.preventDefault()} onClick={() => runEditorCommand('justifyLeft')}>≡</button>
+            <button type="button" className="rich-toolbar-button" title="Align center" aria-label="Align center" onMouseDown={event => event.preventDefault()} onClick={() => runEditorCommand('justifyCenter')}>≡</button>
+            <button type="button" className="rich-toolbar-button" title="Align right" aria-label="Align right" onMouseDown={event => event.preventDefault()} onClick={() => runEditorCommand('justifyRight')}>≡</button>
+            <select aria-label="Line spacing" defaultValue="1.5" onChange={event => setLineHeight(event.target.value)}><option value="1.25">Tight</option><option value="1.5">Normal</option><option value="1.8">Relaxed</option></select>
+            <button type="button" className="rich-toolbar-button rich-page-break-button" title="Insert page break" onMouseDown={event => event.preventDefault()} onClick={insertPageBreak}>Page break</button>
+          </div>
+          <DocumentPaper zoom={zoom} canvasEditorRef={canvasEditorRef} onBlur={syncDocumentCanvas} pageSetup={pageSetup}/>
         </section>
       </div>
-      {templateOpen && <TemplateModal templates={templates.filter(t => t.category === 'Document')} load={loadTemplate} close={() => setTemplateOpen(false)} />}
+      {pageSetupOpen && <DocumentPageSetupModal setup={pageSetup} onChange={changes => setDoc(current => ({ ...current, ...changes }))} close={() => setPageSetupOpen(false)} />}
+      {templateOpen && <DocumentTemplateModal templates={templates.filter(t => t.category === 'Document')} loadBuiltIn={loadBuiltInTemplate} loadSaved={loadTemplate} close={() => setTemplateOpen(false)} />}
+      {bulkOpen && <BulkDocumentModal document={doc} onClose={() => setBulkOpen(false)} onComplete={(count, format) => { addRecent({ id: id(), name: `${title} (${count} documents)`, type: 'Document', modified: 'Just now' }); notify(`Downloaded ${count} personalized ${format.toUpperCase()} documents in a ZIP file`) }} />}
     </div>
   )
 }
 
-function documentLines(doc: DocumentData) { return [doc.date, '', doc.recipientName, doc.recipientPosition, doc.organization, doc.address, '', doc.subject ? `Subject: ${doc.subject}` : '', '', doc.greeting, '', ...doc.body.split('\n'), '', doc.closing, '', doc.senderName, doc.senderPosition].filter((x, i, arr) => x || (i > 0 && arr[i - 1] !== '')) }
+function escapeHtml(value: string) { return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;') }
+function plainTextToRichHtml(value: string) {
+  const paragraphs = (value || '').split(/\n\s*\n/)
+  return paragraphs.map(paragraph => `<p>${escapeHtml(paragraph).replace(/\n/g, '<br />') || '<br />'}</p>`).join('') || '<p><br /></p>'
+}
+function richBodyHtml(value: string) {
+  if (!/<[a-z][\s\S]*>/i.test(value)) return plainTextToRichHtml(value)
+  const parsed = new DOMParser().parseFromString(value, 'text/html')
+  const allowed = new Set(['p', 'div', 'br', 'strong', 'b', 'em', 'i', 'u', 'span', 'font', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'hr'])
+  const cleanNode = (node: Node): string => {
+    if (node.nodeType === Node.TEXT_NODE) return escapeHtml(node.textContent || '')
+    if (node.nodeType !== Node.ELEMENT_NODE) return ''
+    const element = node as HTMLElement
+    const tag = element.tagName.toLowerCase()
+    if (!allowed.has(tag)) return escapeHtml(element.textContent || '')
+    const content = Array.from(element.childNodes).map(cleanNode).join('')
+    if (tag === 'br') return '<br />'
+    if (tag === 'hr') return '<hr class="page-break" />'
+    const outputTag = tag === 'font' ? 'span' : tag
+    const styles: string[] = []
+    if (['left', 'center', 'right', 'justify'].includes(element.style.textAlign)) styles.push(`text-align:${element.style.textAlign}`)
+    if (/^(1\.25|1\.5|1\.8)$/.test(element.style.lineHeight)) styles.push(`line-height:${element.style.lineHeight}`)
+    const fontFamily = (element.style.fontFamily || element.getAttribute('face') || '').replace(/["']/g, '').trim()
+    if (['Calibri', 'Aptos', 'Times New Roman', 'Arial', 'Georgia', 'Verdana', 'Tahoma'].includes(fontFamily)) styles.push(`font-family:${fontFamily}`)
+    return `<${outputTag}${styles.length ? ` style="${styles.join(';')}"` : ''}>${content}</${outputTag}>`
+  }
+  const html = Array.from(parsed.body.childNodes).map(cleanNode).join('')
+  return html || '<p><br /></p>'
+}
+function richBodyLines(value: string) {
+  const parsed = new DOMParser().parseFromString(richBodyHtml(value), 'text/html')
+  const lines: string[] = []
+  Array.from(parsed.body.children).forEach((element, index, elements) => {
+    const tag = element.tagName.toLowerCase()
+    if (tag === 'hr') { lines.push('\f'); return }
+    if (tag === 'ul' || tag === 'ol') Array.from(element.children).forEach((item, index) => lines.push(`${tag === 'ol' ? `${index + 1}.` : '•'} ${item.textContent?.trim() || ''}`))
+    else lines.push(element.textContent?.trim() || '')
+    if (index < elements.length - 1 && ['p', 'div', 'h1', 'h2', 'h3'].includes(tag)) lines.push('')
+  })
+  return lines
+}
+function documentLines(doc: DocumentData) {
+  if (doc.type === 'Memorandum') return ['MEMORANDUM', '', `TO: ${doc.recipientName}`, `FROM: ${doc.senderName}`, `DATE: ${doc.date}`, `SUBJECT: ${doc.subject}`, '', ...richBodyLines(doc.body)].filter((x, i, arr) => x || x === '\f' || (i > 0 && arr[i - 1] !== ''))
+  return [doc.date, '', doc.recipientName, doc.recipientPosition, doc.organization, doc.address, '', doc.subject ? `Subject: ${doc.subject}` : '', '', doc.greeting, '', ...richBodyLines(doc.body), '', doc.closing, '', doc.senderName, doc.senderPosition].filter((x, i, arr) => x || x === '\f' || (i > 0 && arr[i - 1] !== ''))
+}
+function canvasField(value: string, field: keyof DocumentData, placeholder?: string) { return `<p data-field="${field}"${placeholder ? ` data-placeholder="${placeholder}"` : ''}>${escapeHtml(value)}</p>` }
+function canvasInlineField(value: string, field: keyof DocumentData, placeholder: string) { return `<span data-field="${field}" data-placeholder="${placeholder}">${escapeHtml(value)}</span>` }
+function documentCanvasHtml(document: DocumentData) {
+  if (document.type === 'Memorandum') return `<div class="document-memo-title">MEMORANDUM</div><div class="document-memo-meta"><p><strong>TO:</strong> ${canvasInlineField(document.recipientName, 'recipientName', 'Recipient name')}</p><p><strong>FROM:</strong> ${canvasInlineField(document.senderName, 'senderName', 'Sender name')}</p><p><strong>DATE:</strong> ${canvasInlineField(document.date, 'date', 'Date')}</p><p><strong>SUBJECT:</strong> ${canvasInlineField(document.subject, 'subject', 'Subject')}</p></div><div data-field="body" class="rich-document-body rich-body-editor">${richBodyHtml(document.body)}</div>`
+  return `<div class="document-date-block">${canvasField(document.date, 'date')}</div><div class="document-recipient-block">${canvasField(document.recipientName, 'recipientName', 'Recipient name')}${canvasField(document.recipientPosition, 'recipientPosition', 'Recipient position')}${canvasField(document.organization, 'organization', 'Office / organization')}${canvasField(document.address, 'address', 'Address')}</div><div class="document-subject-block"><p class="subject-line">Subject: ${canvasInlineField(document.subject, 'subject', 'Subject')}</p></div><div class="document-greeting-block">${canvasField(document.greeting, 'greeting')}</div><div data-field="body" class="rich-document-body rich-body-editor">${richBodyHtml(document.body)}</div><div class="document-closing-block">${canvasField(document.closing, 'closing')}<div class="document-signature-space"></div>${canvasField(document.senderName, 'senderName', 'Sender name')}${canvasField(document.senderPosition, 'senderPosition', 'Sender position')}</div>`
+}
+function DocumentPaper({ zoom, canvasEditorRef, onBlur, pageSetup }: { zoom: number; canvasEditorRef: RefObject<HTMLElement | null>; onBlur: () => void; pageSetup: DocumentPageSetup }) {
+  const dimensions = pageSetup.pageSize === 'Legal'
+    ? { width: '215.9mm', height: '355.6mm', className: 'paper-legal' }
+    : pageSetup.pageSize === 'Letter'
+      ? { width: '215.9mm', height: '279.4mm', className: 'paper-letter' }
+      : { width: '210mm', height: '297mm', className: 'paper-a4' }
+  const margins = pageSetup.margins === 'narrow'
+    ? '12.7mm'
+    : pageSetup.margins === 'wide'
+      ? '25.4mm 38.1mm'
+      : '25.4mm'
+  return <div className="paper-wrap"><article ref={canvasEditorRef} className={`paper document-paper ${dimensions.className}`} contentEditable suppressContentEditableWarning role="textbox" aria-label="Editable document canvas" aria-multiline="true" onBlur={onBlur} style={{ width: dimensions.width, minHeight: dimensions.height, padding: margins, fontFamily: pageSetup.fontFamily, fontSize: `${pageSetup.fontSize}pt`, transform: `scale(${zoom})`, transformOrigin: 'top center', marginBottom: `${(zoom - 1) * 1080}px` }} /></div>
+}
 function Paper({ zoom, lines, certificate = false }: { zoom: number; lines: string[]; certificate?: boolean }) { return <div className={`paper-wrap ${certificate ? 'certificate-paper' : ''}`}><article className="paper" style={{ transform: `scale(${zoom})`, transformOrigin: 'top center', marginBottom: `${(zoom - 1) * 1080}px` }}>{certificate ? <div className="certificate-inner">{lines.map((line, i) => <p key={i} className={i === 0 ? 'certificate-title' : ''}>{line || ' '}</p>)}</div> : lines.map((line, i) => <p key={i} className={line.startsWith('Subject:') ? 'subject-line' : ''}>{line || ' '}</p>)}</article></div> }
 
 function Spreadsheets({ addRecent, defaultExport, notify, onImportStatus, onDirtyChange, onSnapshotChange }: {
@@ -2808,8 +2972,8 @@ function Archives({
   )
 }
 
-function RecentFiles({ recent, setRecent }: { recent: RecentFile[]; setRecent: (items: RecentFile[]) => void }) { return <div className="page"><PageTitle title="Recent Files" subtitle="A lightweight history of work created in Office Toolkit."/>{recent.length ? <><RecentTable recent={recent}/><button className="button danger-button" onClick={() => { if (confirm('Clear all recent history?')) { storage.clearRecent(); setRecent([]) } }}>Clear recent history</button></> : <EmptyState title="No recent files yet" text="Files you work with will appear here."/>}</div> }
-function RecentTable({ recent }: { recent: RecentFile[] }) { return <div className="recent-table"><div className="recent-header"><span>Name</span><span>Type</span><span>Modified</span><span>Action</span></div>{recent.map(item => <div className="recent-row" key={item.id}><span className="filename">{item.type === 'Spreadsheet' ? <FileSpreadsheet size={17}/> : <FileText size={17}/>} {item.name}</span><span><i className={`type-dot ${item.type.toLowerCase()}`}/>{item.type}</span><span>{item.modified}</span><span><button className="text-button" onClick={() => alert('This recent entry stores metadata only. Re-import the original file to open it again.')}>Open</button><button className="more-button" title="More actions"><MoreHorizontal size={17}/></button></span></div>)}</div> }
+function RecentFiles({ recent, setRecent }: { recent: RecentFile[]; setRecent: (items: RecentFile[]) => void }) { return <div className="page"><PageTitle title="Recent Files" subtitle="A lightweight history of work created in Office Toolkit.">{recent.length > 0 && <button className="button danger-button" onClick={() => { if (confirm('Clear all recent history?')) { storage.clearRecent(); setRecent([]) } }}>Clear recent history</button>}</PageTitle>{recent.length ? <RecentTable recent={recent}/> : <EmptyState title="No recent files yet" text="Files you work with will appear here."/>}</div> }
+function RecentTable({ recent }: { recent: RecentFile[] }) { return <div className="recent-table"><div className="recent-header"><span>Name</span><span>Type</span><span>Modified</span><span>Action</span></div>{recent.map(item => <div className="recent-row" key={item.id}><span className="filename">{item.type === 'Spreadsheet' ? <FileSpreadsheet size={17}/> : <FileText size={17}/>} {item.name}</span><span><i className={`type-dot ${item.type.toLowerCase()}`}/>{item.type}</span><span>{item.modified}</span><span><button className="text-button" onClick={() => alert('This recent entry stores metadata only. Re-import the original file to open it again.')}>Open</button></span></div>)}</div> }
 
 function Settings({
   theme,
@@ -2851,138 +3015,169 @@ function Settings({
   onResetAllData: () => void
 }) {
   const config = getSupabaseConfig()
+  const [category, setCategory] = useState<'account' | 'appearance' | 'workspace' | 'storage' | 'about'>('account')
+  const categories = [
+    { id: 'account' as const, label: 'Account', detail: 'Sign-in and cloud access' },
+    { id: 'appearance' as const, label: 'Appearance', detail: 'Theme and color palette' },
+    { id: 'workspace' as const, label: 'Workspace', detail: 'Files, exports, and privacy' },
+    { id: 'storage' as const, label: 'Storage & data', detail: 'Local saved content' },
+    { id: 'about' as const, label: 'About', detail: 'Product information' }
+  ]
 
   return (
     <div className="page settings">
       <PageTitle title="Settings" subtitle="Personalize Office Toolkit, manage cloud accounts, and local data." />
+      <div className="settings-layout">
+        <nav className="settings-nav" aria-label="Settings categories">
+          {categories.map(item => <button type="button" key={item.id} className={category === item.id ? 'active' : ''} onClick={() => setCategory(item.id)}><strong>{item.label}</strong><small>{item.detail}</small></button>)}
+        </nav>
 
-      <section>
-        <h2>Account & Cloud Database</h2>
-        <p>Supabase Authentication and Team Management</p>
-        <div className="settings-account-card">
-          <div className="settings-account-header">
-            <div>
-              <strong>{currentUser ? (currentUser.full_name || currentUser.email) : 'Not Signed In'}</strong>
-              <small>
-                {currentUser
-                  ? `Logged in as ${currentUser.role === 'admin' ? 'Administrator' : 'Staff Member'} (${currentUser.email})`
-                  : 'Sign in to access team tools and role-based permissions.'}
-              </small>
+        <div className="settings-panel">
+          {category === 'account' && <section className="settings-category">
+            <h2>Account & cloud database</h2>
+            <p>Sign in and manage the connected team workspace.</p>
+            <div className="settings-account-card">
+              <div className="settings-account-header"><div><strong>{currentUser ? (currentUser.full_name || currentUser.email) : 'Not Signed In'}</strong><small>{currentUser ? `Logged in as ${currentUser.role === 'admin' ? 'Administrator' : 'Staff Member'} (${currentUser.email})` : 'Sign in to access team tools and role-based permissions.'}</small></div><span className={`status-badge ${config.isConfigured ? 'active' : 'disabled'}`}>{config.isConfigured ? 'Supabase Connected' : 'Local Mode'}</span></div>
+              <div className="header-actions" style={{ marginTop: '12px' }}>{currentUser ? <button type="button" className="button secondary" onClick={onSignOut}>Sign Out</button> : <button type="button" className="button" onClick={() => onOpenAuth('login')}>Sign In / Register</button>}{onOpenOnboarding && <button type="button" className="button secondary" onClick={onOpenOnboarding}>Replay Welcome Tour</button>}</div>
             </div>
-            <span className={`status-badge ${config.isConfigured ? 'active' : 'disabled'}`}>
-              {config.isConfigured ? 'Supabase Connected' : 'Local Mode'}
-            </span>
-          </div>
+          </section>}
 
-          <div className="header-actions" style={{ marginTop: '12px' }}>
-            {currentUser ? (
-              <button type="button" className="button secondary" onClick={onSignOut}>
-                Sign Out
-              </button>
-            ) : (
-              <button type="button" className="button" onClick={() => onOpenAuth('login')}>
-                Sign In / Register
-              </button>
-            )}
-            {onOpenOnboarding && (
-              <button
-                type="button"
-                className="button secondary"
-                onClick={onOpenOnboarding}
-              >
-                Replay Welcome Tour
-              </button>
-            )}
-          </div>
-        </div>
-      </section>
+          {category === 'appearance' && <section className="settings-category">
+            <h2>Appearance</h2><p>Choose how the application looks and feels.</p>
+            <div className="settings-block"><h3>Display mode</h3><div className="segmented">{['light', 'dark', 'system'].map(x => <button key={x} className={theme === x ? 'selected' : ''} onClick={() => setTheme(x)}>{x[0].toUpperCase() + x.slice(1)}</button>)}</div></div>
+            <div className="settings-block"><h3>Color palette</h3><p>Choose an accent tone for active tools, primary buttons, and focus states.</p><div className="accent-picker-grid">{[
+              { id: 'blue', label: 'Cobalt Blue', desc: 'Confident primary actions & clarity', color: '#2563eb' }, { id: 'sky', label: 'Sky Blue', desc: 'Fresh, bright & approachable', color: '#0284c7' }, { id: 'violet', label: 'Violet', desc: 'Focused, polished & distinctive', color: '#7c3aed' }, { id: 'emerald', label: 'Emerald Teal', desc: 'Modern & crisp productivity', color: '#0f766e' }, { id: 'indigo', label: 'Royal Indigo', desc: 'Executive and clean', color: '#4338ca' }, { id: 'forest', label: 'Forest Pine', desc: 'Calming and editorial', color: '#1b4332' }, { id: 'amber', label: 'Warm Amber', desc: 'Classic and archival', color: '#b45309' }, { id: 'rose', label: 'Rose', desc: 'Warm and expressive', color: '#be123c' }, { id: 'slate', label: 'Minimal Slate', desc: 'Monochrome neutral focus', color: '#334155' }
+            ].map(item => <button type="button" key={item.id} className={`accent-card ${accent === item.id ? 'active' : ''}`} onClick={() => setAccent(item.id)}><span className="accent-swatch" style={{ background: item.color }} /><div className="accent-card-info"><strong>{item.label}</strong><small>{item.desc}</small></div></button>)}</div></div>
+          </section>}
 
-      <section>
-        <h2>Appearance & Theme</h2>
-        <p>Interface Display Mode</p>
-        <div className="segmented">
-          {['light', 'dark', 'system'].map(x => (
-            <button key={x} className={theme === x ? 'selected' : ''} onClick={() => setTheme(x)}>
-              {x[0].toUpperCase() + x.slice(1)}
-            </button>
-          ))}
-        </div>
+          {category === 'workspace' && <section className="settings-category">
+            <h2>Workspace</h2><p>Control file history, exports, and local processing.</p>
+            <div className="settings-block"><h3>Files & exports</h3><label className="toggle-row"><span>Remember recent files<small>Store only metadata for imported files.</small></span><input type="checkbox" checked={rememberRecent} onChange={e => setRememberRecent(e.target.checked)} /></label><label>Default export format<select value={defaultExport} onChange={e => setDefaultExport(e.target.value)}><option>PDF</option><option>DOCX</option><option>Excel</option></select></label></div>
+            <div className="settings-block"><h3>Privacy</h3><div className="privacy-block"><LocalBadge /><p>Core document and spreadsheet operations are processed in your browser on this device. Office Toolkit does not automatically send your files anywhere.</p></div></div>
+          </section>}
 
-        <div style={{ marginTop: '22px' }}>
-          <p style={{ marginBottom: '4px', fontWeight: 600 }}>Color Palette / Accent Theme</p>
-          <small style={{ color: 'var(--muted)', fontSize: '11.5px', display: 'block' }}>
-            Choose an accent tone for active tools, buttons, badges, and focus rings.
-          </small>
+          {category === 'storage' && <section className="settings-category">
+            <h2>Storage & data</h2><p>Review and clear locally stored workspace information.</p>
+            <div className="storage-list"><span>Saved templates <b>{templates.length}</b></span><span>Archived sessions <b>{archives.length}</b></span><span>Recent metadata <b>{storage.recent().length}</b></span></div>
+            <div className="header-actions"><button type="button" className="button secondary" onClick={clearRecent}>Clear recent history</button><button type="button" className="button secondary" onClick={clearArchives}>Clear archives</button><button type="button" className="button secondary" onClick={clearTemplates}>Clear templates</button><button type="button" className="button danger-button" onClick={onResetAllData}>Reset all local data</button></div>
+          </section>}
 
-          <div className="accent-picker-grid">
-            {[
-              { id: 'emerald', label: 'Emerald Teal', desc: 'Modern & Crisp Productivity', color: '#0f766e' },
-              { id: 'indigo', label: 'Royal Indigo', desc: 'Executive SaaS & Clean Slate', color: '#4338ca' },
-              { id: 'forest', label: 'Forest Pine', desc: 'Calming Evergreen & Editorial', color: '#1b4332' },
-              { id: 'amber', label: 'Warm Amber', desc: 'Classic Bronze & Archival Paper', color: '#b45309' },
-              { id: 'slate', label: 'Minimal Slate', desc: 'Monochrome Neutral Focus', color: '#334155' }
-            ].map(item => (
-              <button
-                type="button"
-                key={item.id}
-                className={`accent-card ${accent === item.id ? 'active' : ''}`}
-                onClick={() => setAccent(item.id)}
-              >
-                <span className="accent-swatch" style={{ background: item.color }} />
-                <div className="accent-card-info">
-                  <strong>{item.label}</strong>
-                  <small>{item.desc}</small>
-                </div>
-              </button>
-            ))}
-          </div>
+          {category === 'about' && <section className="settings-category"><h2>About Office Toolkit</h2><p>Personal productivity utilities for repetitive office work.</p><div className="settings-about"><strong>Office Toolkit</strong><small>Version 0.1.0</small></div></section>}
         </div>
-      </section>
-      <section>
-        <h2>Files</h2>
-        <label className="toggle-row">
-          <span>Remember recent files<small>Store only metadata for imported files.</small></span>
-          <input type="checkbox" checked={rememberRecent} onChange={e => setRememberRecent(e.target.checked)} />
-        </label>
-        <label>Default export format
-          <select value={defaultExport} onChange={e => setDefaultExport(e.target.value)}>
-            <option>PDF</option>
-            <option>DOCX</option>
-            <option>Excel</option>
-          </select>
-        </label>
-      </section>
-      <section>
-        <h2>Privacy</h2>
-        <div className="privacy-block">
-          <LocalBadge />
-          <p>Core document and spreadsheet operations are processed in your browser on this device. Office Toolkit does not automatically send your files anywhere.</p>
-        </div>
-      </section>
-      <section>
-        <h2>Storage</h2>
-        <div className="storage-list">
-          <span>Saved templates <b>{templates.length}</b></span>
-          <span>Archived sessions <b>{archives.length}</b></span>
-          <span>Recent metadata <b>{storage.recent().length}</b></span>
-        </div>
-        <div className="header-actions">
-          <button type="button" className="button secondary" onClick={clearRecent}>Clear recent history</button>
-          <button type="button" className="button secondary" onClick={clearArchives}>Clear archives</button>
-          <button type="button" className="button secondary" onClick={clearTemplates}>Clear templates</button>
-          <button type="button" className="button danger-button" onClick={onResetAllData}>Reset all local data</button>
-        </div>
-      </section>
-      <section>
-        <h2>About</h2>
-        <p>Office Toolkit</p>
-        <small>Personal productivity utilities for repetitive office work. Version 0.1.0</small>
-      </section>
+      </div>
     </div>
   )
 }
 
 function TemplateModal({ templates, load, close }: { templates: SavedTemplate[]; load: (t: SavedTemplate) => void; close: () => void }) { return <Modal title="Choose a template" close={close}>{templates.length ? <div className="template-picker">{templates.map(t => <button key={t.id} onClick={() => load(t)}><span><strong>{t.name}</strong><small>Updated {t.updatedAt}</small></span></button>)}</div> : <EmptyState title="No saved templates" text="Save your current work as a template to use it again."/>}</Modal> }
+
+function DocumentPageSetupModal({ setup, onChange, close }: { setup: DocumentPageSetup; onChange: (changes: Partial<DocumentPageSetup>) => void; close: () => void }) {
+  return <Modal title="Page setup" close={close}>
+    <div className="page-setup-form">
+      <section>
+        <h3>Paper size</h3>
+        <div className="segmented" role="group" aria-label="Paper size">
+          <button className={setup.pageSize === 'A4' ? 'selected' : ''} onClick={() => onChange({ pageSize: 'A4' })}>A4</button>
+          <button className={setup.pageSize === 'Letter' ? 'selected' : ''} onClick={() => onChange({ pageSize: 'Letter' })}>Letter</button>
+          <button className={setup.pageSize === 'Legal' ? 'selected' : ''} onClick={() => onChange({ pageSize: 'Legal' })}>Long / Legal</button>
+        </div>
+      </section>
+      <section>
+        <h3>Margins</h3>
+        <div className="segmented" role="group" aria-label="Document margins">
+          <button className={setup.margins === 'narrow' ? 'selected' : ''} onClick={() => onChange({ margins: 'narrow' })}>Narrow</button>
+          <button className={setup.margins === 'standard' ? 'selected' : ''} onClick={() => onChange({ margins: 'standard' })}>Standard</button>
+          <button className={setup.margins === 'wide' ? 'selected' : ''} onClick={() => onChange({ margins: 'wide' })}>Wide</button>
+        </div>
+      </section>
+      <p className="page-setup-note">Paper settings are saved with the document and applied to print, PDF, and DOCX export.</p>
+    </div>
+  </Modal>
+}
+
+function DocumentTemplateModal({ templates, loadBuiltIn, loadSaved, close }: { templates: SavedTemplate[]; loadBuiltIn: (template: DocumentData) => void; loadSaved: (template: SavedTemplate) => void; close: () => void }) { return <Modal title="Document templates" close={close}><div className="template-library"><section className="template-library-group"><h3>Office templates</h3><p>Start with a structured format, then replace the bracketed details.</p><div className="template-picker">{builtInDocumentTemplates.map(template => <button key={template.id} onClick={() => loadBuiltIn(template.data)}><span><strong>{template.name}</strong><small>{template.description}</small></span></button>)}</div></section>{templates.length > 0 && <section className="template-library-group"><h3>Saved templates</h3><p>Your locally saved document formats.</p><div className="template-picker">{templates.map(template => <button key={template.id} onClick={() => loadSaved(template)}><span><strong>{template.name}</strong><small>Updated {template.updatedAt}</small></span></button>)}</div></section>}</div></Modal> }
+
+const documentMergeFields = ['recipientName', 'recipientPosition', 'organization', 'address'] as const
+type DocumentMergeField = typeof documentMergeFields[number]
+type DocumentMergeMappings = Record<DocumentMergeField, string>
+
+function guessMergeColumn(headers: string[], patterns: RegExp[]) {
+  return headers.find(header => patterns.some(pattern => pattern.test(header))) || ''
+}
+
+function mergeDocumentRow(document: DocumentData, row: string[], headers: string[], mappings: DocumentMergeMappings): DocumentData {
+  const findValue = (column: string) => {
+    const index = headers.findIndex(header => header.trim().toLowerCase() === column.trim().toLowerCase())
+    return index >= 0 ? (row[index] || '').trim() : ''
+  }
+  const replaceFields = (value: string) => value.replace(/{{\s*([^}]+?)\s*}}/g, (_match, column: string) => findValue(column) || `{{${column}}}`)
+  const merged = { ...document }
+  documentMergeFields.forEach(field => {
+    if (mappings[field]) merged[field] = findValue(mappings[field])
+  })
+  ;(['type', 'date', 'recipientName', 'recipientPosition', 'organization', 'address', 'subject', 'greeting', 'body', 'closing', 'senderName', 'senderPosition'] as const).forEach(field => {
+    merged[field] = replaceFields(merged[field])
+  })
+  return merged
+}
+
+function BulkDocumentModal({ document, onClose, onComplete }: { document: DocumentData; onClose: () => void; onComplete: (count: number, format: 'pdf' | 'docx') => void }) {
+  const [spreadsheet, setSpreadsheet] = useState<SpreadsheetData | null>(null)
+  const [mappings, setMappings] = useState<DocumentMergeMappings>({ recipientName: '', recipientPosition: '', organization: '', address: '' })
+  const [format, setFormat] = useState<'pdf' | 'docx'>('pdf')
+  const [error, setError] = useState('')
+  const [generating, setGenerating] = useState(false)
+  const [progress, setProgress] = useState({ current: 0, total: 0 })
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const importSpreadsheet = async (file?: File) => {
+    if (!file) return
+    try {
+      const imported = await readSpreadsheet(file)
+      setSpreadsheet(imported)
+      setMappings({
+        recipientName: guessMergeColumn(imported.headers, [/^full.?name$/i, /^name$/i, /recipient/i, /employee.*name/i]),
+        recipientPosition: guessMergeColumn(imported.headers, [/position/i, /designation/i, /title/i]),
+        organization: guessMergeColumn(imported.headers, [/organization/i, /office/i, /agency/i, /company/i]),
+        address: guessMergeColumn(imported.headers, [/address/i, /location/i])
+      })
+      setError('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to read this spreadsheet.')
+    }
+  }
+
+  const generate = async () => {
+    if (!spreadsheet) return
+    const rows = spreadsheet.rows.filter(row => row.some(cell => cell.trim()))
+    if (!rows.length) {
+      setError('This spreadsheet has no data rows to generate.')
+      return
+    }
+    setGenerating(true)
+    setProgress({ current: 0, total: rows.length })
+    try {
+      const documents = rows.map((row, index) => {
+        const merged = mergeDocumentRow(document, row, spreadsheet.headers, mappings)
+        const mergedTitle = merged.subject || `${merged.type} document`
+        return {
+          title: mergedTitle,
+          lines: documentLines(merged),
+          fileName: `${String(index + 1).padStart(3, '0')}_${merged.recipientName || mergedTitle}`
+        }
+      })
+      await exportBulkDocumentsZip(documents, format, `${document.subject || document.type}_batch`, (current, total) => setProgress({ current, total }))
+      onComplete(rows.length, format)
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to generate the document batch.')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  return <Modal title="Bulk document generation" close={generating ? () => undefined : onClose}><div className="bulk-document-modal">{!spreadsheet ? <section className="bulk-import-step"><h3>Import recipient data</h3><p>Choose an Excel or CSV file. It stays on this device and is used only to personalize the current document.</p><input ref={fileRef} hidden type="file" accept=".xlsx,.xls,.csv" onChange={event => importSpreadsheet(event.target.files?.[0])}/><button type="button" className="button" onClick={() => fileRef.current?.click()}>Choose spreadsheet</button></section> : <><section className="bulk-data-summary"><h3>{spreadsheet.name}</h3><p>{spreadsheet.rows.length.toLocaleString()} rows · {spreadsheet.headers.length} columns</p><button type="button" className="text-button" disabled={generating} onClick={() => fileRef.current?.click()}>Choose another file</button><input ref={fileRef} hidden type="file" accept=".xlsx,.xls,.csv" onChange={event => importSpreadsheet(event.target.files?.[0])}/></section><section className="bulk-mapping"><h3>Map recipient fields</h3><p>Optional fields are filled from matching columns. You can also use <code>{'{{Column Name}}'}</code> anywhere in the document.</p><div className="bulk-mapping-grid">{documentMergeFields.map(field => <label key={field}>{field === 'recipientName' ? 'Recipient name' : field === 'recipientPosition' ? 'Recipient position' : field === 'organization' ? 'Office / organization' : 'Address'}<select value={mappings[field]} disabled={generating} onChange={event => setMappings({ ...mappings, [field]: event.target.value })}><option value="">Do not replace</option>{spreadsheet.headers.map(header => <option key={header} value={header}>{header}</option>)}</select></label>)}</div></section><section className="bulk-export-options"><h3>Export format</h3><div className="segmented"><button type="button" className={format === 'pdf' ? 'selected' : ''} disabled={generating} onClick={() => setFormat('pdf')}>PDF ZIP</button><button type="button" className={format === 'docx' ? 'selected' : ''} disabled={generating} onClick={() => setFormat('docx')}>DOCX ZIP</button></div></section>{generating && <p className="bulk-progress">Generating {progress.current} of {progress.total} documents…</p>}<div className="modal-actions"><button type="button" className="button secondary" disabled={generating} onClick={onClose}>Cancel</button><button type="button" className="button" disabled={generating} onClick={generate}>{generating ? 'Generating…' : `Generate ${spreadsheet.rows.length} documents`}</button></div></>}{error && <p className="error">{error}</p>}</div></Modal>
+}
 
 function CommandPalette({ close, open, isAdmin }: { close: () => void; open: (page: Page) => void; isAdmin?: boolean }) {
   const [query, setQuery] = useState('')

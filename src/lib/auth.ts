@@ -26,9 +26,14 @@ export async function loginWithEmail(email: string, password: string): Promise<{
 
     // Fetch user profile from database
     const profile = await fetchUserProfile(data.user.id, data.user.email || email)
-    if (profile && profile.status === 'disabled') {
+    if (profile.status !== 'active') {
       await supabase.auth.signOut()
-      return { profile: null, error: 'Your account has been deactivated. Please contact an administrator.' }
+      return {
+        profile: null,
+        error: profile.status === 'pending'
+          ? 'Your registration is awaiting administrator approval.'
+          : 'Your account has been deactivated. Please contact an administrator.'
+      }
     }
 
     return { profile, error: null }
@@ -91,8 +96,9 @@ export async function registerWithEmail(
       return { profile: null, error: 'Signup succeeded but user was not created.' }
     }
 
-    // Try fetching profile (if trigger created it, or fallback)
+    // The signup trigger creates a pending profile for new staff accounts.
     const profile = await fetchUserProfile(data.user.id, data.user.email || email, fullName)
+    if (profile.status !== 'active') await supabase.auth.signOut()
     return { profile, error: null }
   } catch (err) {
     return { profile: null, error: err instanceof Error ? err.message : 'Registration failed.' }
@@ -134,7 +140,7 @@ export async function sendPasswordReset(email: string): Promise<{ error: string 
 }
 
 /**
- * Fetches or creates user profile from the `profiles` table.
+ * Fetches the profile created by the secure database signup trigger.
  */
 export async function fetchUserProfile(
   userId: string,
@@ -147,7 +153,7 @@ export async function fetchUserProfile(
     email,
     full_name: fallbackName || email.split('@')[0],
     role: 'staff',
-    status: 'active',
+    status: 'pending',
     created_at: new Date().toISOString()
   }
 
@@ -164,27 +170,8 @@ export async function fetchUserProfile(
       return data as UserProfile
     }
 
-    // If profile row doesn't exist yet, check how many profiles exist
-    const { count } = await supabase
-      .from('profiles')
-      .select('*', { count: 'exact', head: true })
-
-    const assignedRole: UserRole = (!count || count === 0) ? 'admin' : 'staff'
-
-    const { data: inserted } = await supabase
-      .from('profiles')
-      .upsert({
-        id: userId,
-        email,
-        full_name: fallbackName || email.split('@')[0],
-        role: assignedRole,
-        status: 'active'
-      })
-      .select()
-      .maybeSingle()
-
-    if (inserted) return inserted as UserProfile
-    return { ...defaultProfile, role: assignedRole }
+    // Never create a profile from the client: it would bypass admin approval.
+    return defaultProfile
   } catch (err) {
     console.warn('Could not fetch profile from table (table may not be created yet):', err)
     return defaultProfile

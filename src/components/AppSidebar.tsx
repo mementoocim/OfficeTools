@@ -1,16 +1,22 @@
-import { Archive, BookOpenText, ChevronLeft, FileSpreadsheet, Files, FileText, Home, LayoutTemplate, Medal, Settings, ShieldCheck, TableProperties } from 'lucide-react'
+import { Archive, BookOpenText, CaretLeft, ChartBar, ClockCounterClockwise, FileText, GearSix, House, Medal, ShieldCheck, SquaresFour, Table } from '@phosphor-icons/react'
 import type { Page } from '../types'
 import type { UserProfile } from '../types/auth'
 
-const items: { id: Page; label: string; icon: typeof Home; group?: string }[] = [
-  { id: 'home', label: 'Home', icon: Home, group: 'WORKSPACE' },
+const items = [
+  { id: 'home' as Page, label: 'Home', icon: House, group: 'WORKSPACE' },
   { id: 'documents', label: 'Documents', icon: FileText, group: 'TOOLS' },
-  { id: 'spreadsheets', label: 'Spreadsheets', icon: FileSpreadsheet },
-  { id: 'reports', label: 'Reports', icon: BookOpenText },
+  { id: 'spreadsheets', label: 'Spreadsheets', icon: Table },
+  { id: 'reports', label: 'Reports', icon: ChartBar },
   { id: 'certificates', label: 'Certificates', icon: Medal },
-  { id: 'templates', label: 'Templates', icon: LayoutTemplate, group: 'LIBRARY' },
+  { id: 'templates', label: 'Templates', icon: SquaresFour, group: 'LIBRARY' },
   { id: 'archives', label: 'Archives', icon: Archive },
-  { id: 'recent', label: 'Recent Files', icon: Files },
+  { id: 'recent', label: 'Recent Files', icon: ClockCounterClockwise },
+]
+
+const navigationGroups = [
+  { label: 'WORKSPACE', items: items.slice(0, 1) },
+  { label: 'TOOLS', items: items.slice(1, 5) },
+  { label: 'LIBRARY', items: items.slice(5) }
 ]
 
 export function AppSidebar({
@@ -34,52 +40,51 @@ export function AppSidebar({
 
   return (
     <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
-      <div className="brand">
-        <span className="brand-mark"><TableProperties size={19} /></span>
-        {!collapsed && <span className="brand-copy"><strong>Office Toolkit</strong><small>Productivity workspace</small></span>}
+      <header className="sidebar-header">
+        <span className="brand-mark"><img src="/brand/office-toolkit-mark.png" alt="" /></span>
+        {!collapsed && <span className="brand-copy"><strong>Office Toolkit</strong><small>Workspace</small></span>}
         <button title="Collapse sidebar" className="icon-button collapse" onClick={toggle}>
-          <ChevronLeft size={17} />
+          <CaretLeft size={17} weight="bold" />
         </button>
-      </div>
+      </header>
 
-      <nav>
-        {items.map((item) => (
-          <div key={item.id}>
-            {item.group && <div className="nav-label">{item.group}</div>}
-            <button
-              title={collapsed ? item.label : undefined}
-              className={`nav-item ${page === item.id ? 'active' : ''}`}
-              onClick={() => setPage(item.id)}
-            >
-              <item.icon size={18} />
-              <span>{item.label}</span>
-            </button>
-          </div>
-        ))}
+      <nav className="sidebar-nav" aria-label="Main navigation">
+        {navigationGroups.map(group => <section className="nav-section" key={group.label}>
+          {!collapsed && <div className="nav-label">{group.label}</div>}
+          {group.items.map(item => <button
+            key={item.id}
+            title={collapsed ? item.label : undefined}
+            className={`nav-item ${page === item.id ? 'active' : ''}`}
+            onClick={() => setPage(item.id as Page)}
+          >
+            <item.icon size={19} weight={page === item.id ? 'fill' : 'duotone'} />
+            <span>{item.label}</span>
+          </button>)}
+        </section>)}
 
         {isAdmin && (
-          <div>
-            <div className="nav-label">MANAGEMENT</div>
+          <section className="nav-section nav-section-admin">
+            {!collapsed && <div className="nav-label">MANAGEMENT</div>}
             <button
               title={collapsed ? 'Admin Console' : undefined}
               className={`nav-item ${page === 'admin' ? 'active' : ''}`}
               onClick={() => setPage('admin')}
             >
-              <ShieldCheck size={18} />
+              <ShieldCheck size={19} weight={page === 'admin' ? 'fill' : 'duotone'} />
               <span>Admin Console</span>
             </button>
-          </div>
+          </section>
         )}
       </nav>
 
-      <div className="side-bottom">
+      <footer className="side-bottom sidebar-footer">
         {!collapsed && <div className="nav-label footer-label">ACCOUNT</div>}
         <button
           title={collapsed ? 'Settings' : undefined}
           className={`nav-item ${page === 'settings' ? 'active' : ''}`}
           onClick={() => setPage('settings')}
         >
-          <Settings size={18} />
+          <GearSix size={19} weight={page === 'settings' ? 'fill' : 'duotone'} />
           <span>Settings</span>
         </button>
 
@@ -140,7 +145,7 @@ export function AppSidebar({
             )}
           </div>
         )}
-      </div>
+      </footer>
     </aside>
   )
 }

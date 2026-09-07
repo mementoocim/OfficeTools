@@ -39,6 +39,7 @@ export type SpreadsheetData = {
 export type DocumentData = {
   type: string; date: string; recipientName: string; recipientPosition: string; organization: string;
   address: string; subject: string; greeting: string; body: string; closing: string; senderName: string; senderPosition: string
+  pageSize?: 'A4' | 'Letter' | 'Legal'; margins?: 'standard' | 'narrow' | 'wide'; fontFamily?: string; fontSize?: number
 }
 
 export type ReportSection = { id: string; title: string; content: string; type: 'Text' | 'Bullet List' | 'Numbered List' }

@@ -61,7 +61,7 @@ export function getSupabaseClient(): SupabaseClient | null {
 }
 
 /**
- * SQL Script for setting up user profiles & auto-admin for the 1st user
+ * SQL Script for setting up user profiles, first-admin bootstrap, and approval workflow
  */
 export const SUPABASE_INIT_SQL = `-- 1. Create a table for public user profiles
 create table if not exists public.profiles (
@@ -69,10 +69,16 @@ create table if not exists public.profiles (
   email text unique not null,
   full_name text default '',
   role text default 'staff' check (role in ('admin', 'staff', 'viewer')),
-  status text default 'active' check (status in ('active', 'disabled')),
+  status text default 'pending' check (status in ('pending', 'active', 'disabled')),
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
   last_sign_in_at timestamp with time zone
 );
+
+-- Apply the approval status to existing installations without changing current users.
+alter table public.profiles drop constraint if exists profiles_status_check;
+alter table public.profiles add constraint profiles_status_check
+  check (status in ('pending', 'active', 'disabled'));
+alter table public.profiles alter column status set default 'pending';
 
 -- 2. Enable Row Level Security (RLS)
 alter table public.profiles enable row level security;
@@ -94,7 +100,7 @@ returns boolean as $$
 begin
   return exists (
     select 1 from public.profiles
-    where id = auth.uid() and role = 'admin'
+    where id = auth.uid() and role = 'admin' and status = 'active'
   );
 end;
 $$ language plpgsql security definer set search_path = public;
@@ -103,12 +109,7 @@ $$ language plpgsql security definer set search_path = public;
 create policy "profiles_select_policy"
   on public.profiles for select
   to authenticated
-  using (true);
-
-create policy "profiles_insert_policy"
-  on public.profiles for insert
-  to authenticated
-  with check (auth.uid() = id or public.is_admin());
+  using (auth.uid() = id or public.is_admin());
 
 -- Profile roles and statuses must be changed only by an administrator.
 -- Allowing users to update their own row here would let them promote themselves.
@@ -123,18 +124,24 @@ create policy "profiles_delete_policy"
   to authenticated
   using (public.is_admin());
 
--- 6. Trigger to automatically create profile on signup (1st user becomes admin)
+-- 6. Trigger to automatically create a profile on signup.
+-- The first account is active admin for bootstrap; every later account needs approval.
 create or replace function public.handle_new_user()
 returns trigger as $$
 declare
   user_count int;
   initial_role text;
+  initial_status text;
 begin
+  -- Serialize bootstrap so simultaneous first signups cannot both become admins.
+  perform pg_advisory_xact_lock(hashtext('office_toolkit_first_admin'));
   select count(*) into user_count from public.profiles;
   if user_count = 0 then
     initial_role := 'admin';
+    initial_status := 'active';
   else
     initial_role := 'staff';
+    initial_status := 'pending';
   end if;
 
   insert into public.profiles (id, email, full_name, role, status, created_at)
@@ -143,7 +150,7 @@ begin
     new.email,
     coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)),
     initial_role,
-    'active',
+    initial_status,
     now()
   )
   on conflict (id) do nothing;

@@ -94,6 +94,10 @@ export function AuthModal({
       return
     }
 
+    if (profile?.status === 'pending') {
+      setMessage('Registration received. An administrator must approve your account before you can sign in.')
+      return
+    }
     if (profile) {
       setMessage('Account created successfully! Signing you in...')
       setTimeout(() => {
