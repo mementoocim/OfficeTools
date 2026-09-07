@@ -11,14 +11,14 @@ Office Toolkit features:
 - Admin Console: administrators can review pending registrations, activate/deactivate accounts, and filter users.
 - User accounts must be approved by an administrator before access.
 
-Be accurate. Offer short numbered steps when explaining how to do something. Never request passwords, API keys, or personal document contents.`
+Be accurate. Keep answers to two short paragraphs or up to four numbered steps. Use plain text only: do not use Markdown markers such as **, __, #, or code fences. Never request passwords, API keys, or personal document contents.`
 
 function safeMessages(messages) {
   if (!Array.isArray(messages)) return []
   return messages
     .filter(message => message && (message.role === 'user' || message.role === 'assistant') && typeof message.content === 'string')
-    .slice(-10)
-    .map(message => ({ role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: message.content.slice(0, 1600) }] }))
+    .slice(-6)
+    .map(message => ({ role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: message.content.slice(0, 900) }] }))
 }
 
 export async function createHelpReply({ messages, page }, apiKey) {
@@ -32,7 +32,11 @@ export async function createHelpReply({ messages, page }, apiKey) {
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: `${SYSTEM_GUIDE}\nThe user is currently on the ${String(page || 'home')} page.` }] },
       contents,
-      generationConfig: { temperature: 0.25, maxOutputTokens: 400 }
+      generationConfig: {
+        temperature: 0.2,
+        maxOutputTokens: 512,
+        thinkingConfig: { thinkingLevel: 'minimal' }
+      }
     })
   })
 
@@ -41,6 +45,6 @@ export async function createHelpReply({ messages, page }, apiKey) {
     const message = data?.error?.message || 'Gemini could not answer right now.'
     throw new Error(message)
   }
-  const reply = data?.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('').trim()
+  const reply = data?.candidates?.[0]?.content?.parts?.filter(part => !part.thought).map(part => part.text || '').join('').trim()
   return { configured: true, reply: reply || 'I could not prepare an answer. Please try again.' }
 }

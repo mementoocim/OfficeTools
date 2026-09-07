@@ -7,6 +7,13 @@ type ChatMessage = { role: 'user' | 'assistant'; content: string }
 
 const welcome: ChatMessage = { role: 'assistant', content: 'Hi! I’m the Office Toolkit Help assistant. Ask me how to use a feature, find a setting, or work with documents, spreadsheets, reports, and certificates.' }
 
+const cleanAssistantReply = (value: string) => value
+  .replace(/\*\*(.*?)\*\*/g, '$1')
+  .replace(/__(.*?)__/g, '$1')
+  .replace(/`([^`]+)`/g, '$1')
+  .replace(/^#{1,6}\s*/gm, '')
+  .trim()
+
 function offlineAnswer(question: string, page: Page) {
   const normalized = question.toLowerCase()
   if (normalized.includes('archive')) return 'Archives are for saving and restoring your work locally. Open Archives from the sidebar, then select Restore on the item you need.'
@@ -53,7 +60,7 @@ export function HelpAssistant({ page }: { page: Page }) {
         setMessages(current => [...current, { role: 'assistant', content: offlineAnswer(prompt, page) }])
       } else {
         setUsingOfflineHelp(false)
-        setMessages(current => [...current, { role: 'assistant', content: data.reply || 'I could not prepare an answer. Please try again.' }])
+        setMessages(current => [...current, { role: 'assistant', content: cleanAssistantReply(data.reply || 'I could not prepare an answer. Please try again.') }])
       }
     } catch {
       setUsingOfflineHelp(true)
