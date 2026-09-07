@@ -74,6 +74,19 @@ create table if not exists public.profiles (
   last_sign_in_at timestamp with time zone
 );
 
+-- Lightweight audit trail: account/admin events only. No documents, files, or chat data are stored.
+create table if not exists public.audit_events (
+  id bigint generated always as identity primary key,
+  actor_id uuid references auth.users on delete set null,
+  actor_email text not null default 'System',
+  action text not null check (action in ('account_registered', 'user_approved', 'user_reactivated', 'user_deactivated', 'role_updated')),
+  target_id uuid references auth.users on delete set null,
+  target_email text not null default '',
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create index if not exists audit_events_created_at_idx on public.audit_events (created_at desc);
+
 -- Apply the approval status to existing installations without changing current users.
 alter table public.profiles drop constraint if exists profiles_status_check;
 alter table public.profiles add constraint profiles_status_check
@@ -104,6 +117,23 @@ begin
   );
 end;
 $$ language plpgsql security definer set search_path = public;
+
+alter table public.audit_events enable row level security;
+
+do $$
+declare
+    r record;
+begin
+    for r in (select policyname from pg_policies where tablename = 'audit_events' and schemaname = 'public')
+    loop
+        execute format('drop policy if exists %I on public.audit_events', r.policyname);
+    end loop;
+end $$;
+
+create policy "audit_events_select_admin"
+  on public.audit_events for select
+  to authenticated
+  using (public.is_admin());
 
 -- 5. Create fresh, clean RLS policies
 create policy "profiles_select_policy"
@@ -154,6 +184,9 @@ begin
     now()
   )
   on conflict (id) do nothing;
+
+  insert into public.audit_events (actor_id, actor_email, action, target_id, target_email)
+  values (new.id, coalesce(new.email, 'New account'), 'account_registered', new.id, coalesce(new.email, ''));
   return new;
 end;
 $$ language plpgsql security definer set search_path = public;
@@ -162,6 +195,38 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
+
+-- Capture only consequential administrator changes. The trigger bypasses client insert rights,
+-- so users cannot forge audit events from the browser.
+create or replace function public.audit_profile_change()
+returns trigger as $$
+declare
+  event_action text;
+  actor_mail text;
+begin
+  if old.status is distinct from new.status then
+    event_action := case
+      when new.status = 'active' and old.status = 'pending' then 'user_approved'
+      when new.status = 'active' then 'user_reactivated'
+      else 'user_deactivated'
+    end;
+  elsif old.role is distinct from new.role then
+    event_action := 'role_updated';
+  else
+    return new;
+  end if;
+
+  select coalesce(email, 'Administrator') into actor_mail from public.profiles where id = auth.uid();
+  insert into public.audit_events (actor_id, actor_email, action, target_id, target_email)
+  values (auth.uid(), coalesce(actor_mail, 'Administrator'), event_action, new.id, coalesce(new.email, ''));
+  return new;
+end;
+$$ language plpgsql security definer set search_path = public;
+
+drop trigger if exists on_profile_access_changed on public.profiles;
+create trigger on_profile_access_changed
+  after update of role, status on public.profiles
+  for each row execute procedure public.audit_profile_change();
 
 -- 7. Backfill existing auth users. Only the earliest account becomes admin;
 -- every other account starts as staff. Existing profile roles are preserved.

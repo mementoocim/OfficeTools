@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react'
-import { fetchAllProfiles, updateUserRole, updateUserStatus } from '../lib/auth'
+import { fetchAllProfiles, fetchAuditEvents, updateUserRole, updateUserStatus } from '../lib/auth'
 import { getSupabaseConfig, SUPABASE_INIT_SQL } from '../lib/supabase'
-import type { UserProfile, UserRole, UserStatus } from '../types/auth'
+import type { AuditAction, AuditEvent, UserProfile, UserRole, UserStatus } from '../types/auth'
+
+const auditLabels: Record<AuditAction, string> = {
+  account_registered: 'Registered an account',
+  user_approved: 'Approved account',
+  user_reactivated: 'Re-approved account',
+  user_deactivated: 'Deactivated account',
+  role_updated: 'Changed role for'
+}
 
 export function AdminPanel({
   currentUser,
@@ -13,6 +21,9 @@ export function AdminPanel({
   const [users, setUsers] = useState<UserProfile[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([])
+  const [auditLoading, setAuditLoading] = useState(true)
+  const [auditError, setAuditError] = useState('')
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | UserStatus>('all')
   const [showSqlGuide, setShowSqlGuide] = useState(false)
@@ -32,8 +43,21 @@ export function AdminPanel({
     }
   }
 
-  useEffect(() => {
+  const loadAuditTrail = async () => {
+    setAuditLoading(true)
+    const { events, error: err } = await fetchAuditEvents()
+    setAuditLoading(false)
+    setAuditError(err || '')
+    setAuditEvents(events)
+  }
+
+  const refreshAdminData = () => {
     loadUsers()
+    loadAuditTrail()
+  }
+
+  useEffect(() => {
+    refreshAdminData()
   }, [])
 
   const handleRoleChange = async (userId: string, newRole: UserRole) => {
@@ -47,6 +71,7 @@ export function AdminPanel({
       onNotify(`Error: ${err}`)
     } else {
       setUsers(users.map(u => u.id === userId ? { ...u, role: newRole } : u))
+      loadAuditTrail()
       onNotify(`Updated user role to ${newRole}`)
     }
   }
@@ -61,6 +86,7 @@ export function AdminPanel({
       onNotify(`Error: ${err}`)
     } else {
       setUsers(users.map(u => u.id === user.id ? { ...u, status: newStatus } : u))
+      loadAuditTrail()
       onNotify(`User account has been ${newStatus === 'active' ? 'approved' : 'rejected'}`)
     }
   }
@@ -91,7 +117,7 @@ export function AdminPanel({
           <p>Approve new staff accounts, manage permissions, and control workspace access.</p>
         </div>
         <div className="header-actions">
-          <button type="button" className="button secondary" onClick={loadUsers}>
+          <button type="button" className="button secondary" onClick={refreshAdminData}>
             Refresh List
           </button>
           <button type="button" className="button" onClick={() => setShowSqlGuide(!showSqlGuide)}>
@@ -106,7 +132,7 @@ export function AdminPanel({
           <div className="sql-guide-header">
             <div>
               <h3>Supabase Database Schema & Approval Flow</h3>
-              <p>Run this script in your Supabase SQL Editor. The first account remains the administrator; later registrations are created as pending until you approve them here.</p>
+              <p>Run this script in your Supabase SQL Editor. The first account remains the administrator; later registrations are created as pending until you approve them here. It also creates a lightweight audit trail for registrations and access changes.</p>
             </div>
             <button type="button" className="button sm" onClick={handleCopySql}>
               {copiedSql ? 'Copied!' : 'Copy SQL Script'}
@@ -248,6 +274,36 @@ export function AdminPanel({
           </div>
         )}
       </div>
+
+      <section className="admin-audit-card" aria-labelledby="audit-trail-title">
+        <div className="admin-audit-header">
+          <div>
+            <h2 id="audit-trail-title">Audit trail</h2>
+            <p>Last 50 account and access events. Documents, files, and chat content are never logged.</p>
+          </div>
+          <button type="button" className="button sm secondary" onClick={loadAuditTrail}>Refresh audit trail</button>
+        </div>
+
+        {auditError ? (
+          <p className="admin-audit-note">Audit trail is unavailable. Run the updated Database Setup Script above to create it.</p>
+        ) : auditLoading ? (
+          <p className="admin-audit-note">Loading audit trail…</p>
+        ) : auditEvents.length === 0 ? (
+          <p className="admin-audit-note">No events yet. New registrations and administrator access changes will appear here.</p>
+        ) : (
+          <div className="admin-audit-list">
+            {auditEvents.map(event => (
+              <article key={event.id}>
+                <div>
+                  <strong>{auditLabels[event.action]} <span>{event.target_email || 'account'}</span></strong>
+                  <small>by {event.actor_email || 'System'}</small>
+                </div>
+                <time dateTime={event.created_at}>{new Date(event.created_at).toLocaleString()}</time>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   )
 }

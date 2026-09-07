@@ -1,5 +1,5 @@
 import { getSupabaseClient } from './supabase'
-import type { UserProfile, UserRole, UserStatus } from '../types/auth'
+import type { AuditEvent, UserProfile, UserRole, UserStatus } from '../types/auth'
 
 /**
  * Signs in a user with email and password.
@@ -198,6 +198,26 @@ export async function fetchAllProfiles(): Promise<{ profiles: UserProfile[]; err
     return { profiles: (data as UserProfile[]) || [], error: null }
   } catch (err) {
     return { profiles: [], error: err instanceof Error ? err.message : 'Failed to fetch user list.' }
+  }
+}
+
+/**
+ * Fetches a small, admin-only audit window. Audit rows never include document or file contents.
+ */
+export async function fetchAuditEvents(limit = 50): Promise<{ events: AuditEvent[]; error: string | null }> {
+  const supabase = getSupabaseClient()
+  if (!supabase) return { events: [], error: 'Supabase client not initialized.' }
+
+  try {
+    const { data, error } = await supabase
+      .from('audit_events')
+      .select('id, actor_id, actor_email, action, target_id, target_email, created_at')
+      .order('created_at', { ascending: false })
+      .limit(limit)
+
+    return { events: error ? [] : (data as AuditEvent[]) || [], error: error ? error.message : null }
+  } catch (err) {
+    return { events: [], error: err instanceof Error ? err.message : 'Failed to load audit trail.' }
   }
 }
 

@@ -2433,6 +2433,82 @@ td:last-child,th:last-child { border-right:0 }
   overflow: hidden;
 }
 
+.admin-audit-card {
+  margin-top: 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  overflow: hidden;
+}
+
+.admin-audit-header {
+  padding: 14px 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--soft) 40%, transparent);
+}
+
+.admin-audit-header h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.admin-audit-header p,
+.admin-audit-note {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.admin-audit-note {
+  padding: 18px;
+  margin: 0;
+}
+
+.admin-audit-list article {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 11px 18px;
+  border-top: 1px solid var(--border);
+}
+
+.admin-audit-list article:first-child {
+  border-top: 0;
+}
+
+.admin-audit-list strong,
+.admin-audit-list small {
+  display: block;
+}
+
+.admin-audit-list strong {
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.admin-audit-list strong span {
+  font-weight: 500;
+}
+
+.admin-audit-list small,
+.admin-audit-list time {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.admin-audit-list small {
+  margin-top: 2px;
+}
+
+.admin-audit-list time {
+  white-space: nowrap;
+}
+
 .admin-users-header {
   padding: 14px 18px;
   display: flex;
